@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MyMagazine</title>
+  <meta name="description" content="MyMagazine — prosta ewidencja magazynu: stan, wystawione, do wysłania, wysłane i sprzedane przedmioty.">
+  <meta name="theme-color" content="#f4f5f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="MyMagazine">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Menu główne">
+      <a class="brand" href="#magazyn">
+        <img src="icons/icon.svg" alt="" width="34" height="34">
+        <span>MyMagazine</span>
+      </a>
+      <nav class="nav" id="sideNav" aria-label="Sekcje"></nav>
+      <div class="sidebar-foot">
+        <button type="button" class="side-link" data-open="categories" data-icon="folder">Kategorie</button>
+        <button type="button" class="side-link" data-open="settings" data-icon="settings">Ustawienia i kopia</button>
+        <p class="storage-note">Dane są zapisywane w tej przeglądarce. Pamiętaj o kopii zapasowej.</p>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+      <header class="topbar">
+        <img class="mobile-logo" src="icons/icon.svg" alt="" width="32" height="32">
+        <div class="topbar-text">
+          <h1 id="viewTitle">Magazyn</h1>
+          <p id="viewDesc" class="view-desc"></p>
+        </div>
+        <div class="topbar-actions">
+          <button type="button" class="btn primary" id="btnAdd" data-icon="plus">Dodaj przedmiot</button>
+          <button type="button" class="icon-btn mobile-only" data-open="settings" data-icon="settings" aria-label="Ustawienia"></button>
+        </div>
+      </header>
+
+      <section class="stats" id="stats" aria-label="Podsumowanie"></section>
+
+      <div class="toolbar" id="toolbar">
+        <div class="toolbar-row">
+          <label class="search">
+            <span class="visually-hidden">Szukaj</span>
+            <span data-icon="search"></span>
+            <input id="search" type="search" placeholder="Szukaj po nazwie, notatce, kupującym…" autocomplete="off" enterkeyhint="search">
+          </label>
+          <label class="btn sort-btn" title="Sortowanie">
+            <span data-icon="sort"></span>
+            <span class="sort-label" id="sortLabel"></span>
+            <select id="sort" aria-label="Sortowanie"></select>
+          </label>
+          <button type="button" class="btn select-btn" id="btnSelect" aria-pressed="false" data-icon="listChecks"><span>Zaznacz</span></button>
+        </div>
+        <div class="chips" id="statusChips" hidden></div>
+        <div class="chips" id="catChips"></div>
+      </div>
+
+      <p class="result-info" id="resultInfo" aria-live="polite"></p>
+      <section class="list" id="list"></section>
+    </main>
+  </div>
+
+  <nav class="bottom-nav" id="bottomNav" aria-label="Sekcje"></nav>
+  <button type="button" class="fab" id="fab" aria-label="Dodaj przedmiot" data-icon="plus"></button>
+  <div class="bulkbar" id="bulkbar" hidden></div>
+  <div class="menu-backdrop" id="menuBackdrop" hidden></div>
+  <div class="menu" id="menu" role="menu" hidden></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <dialog id="dialog"></dialog>
+  <dialog id="confirm" class="confirm"></dialog>
+
+  <noscript><p style="padding:16px">MyMagazine wymaga włączonej obsługi JavaScript.</p></noscript>
+  <script src="app.js"></script>
+</body>
+</html>
