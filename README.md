@@ -7,9 +7,9 @@ Działa w przeglądarce na komputerze i na telefonie, a do tego można ją zains
 
 | Zakładka | Co zawiera |
 |---|---|
-| **Magazyn** | Wszystko, co posiadasz, z datą dodania, ilością, miejscem w magazynie i kategorią. Przedmiot **znika stąd automatycznie**, gdy oznaczysz go jako sprzedany. |
-| **Wystawione** | Przedmioty wystawione na sprzedaż: data wystawienia, cena i miejsce wystawienia (OLX, Vinted, Allegro…). |
-| **Do wysłania** | Przedmioty, które ktoś zamówił. Możesz dodać kupującego i termin wysyłki; zamówienia po terminie są wyróżnione na czerwono. |
+| **Magazyn** | Wszystko, co masz na stanie (także wystawione), z datą dodania, ilością, miejscem w magazynie i kategorią. Zamówione przedmioty **przechodzą do „Do wysłania”** i nie są już tu pokazywane. |
+| **Wystawione** | Przedmioty wystawione na sprzedaż: data wystawienia, cena, miejsce wystawienia (OLX, Vinted, Allegro…) i opcjonalny **spis partii**. |
+| **Do wysłania** | Przedmioty, które ktoś zamówił, pokazywane jako „nazwa przedmiotu - nazwa produktu” (np. *buty C folia - Nike Air Force 42*). Możesz dodać kupującego i termin wysyłki; zamówienia po terminie są wyróżnione na czerwono. |
 | **Wysłane** | Paczki w drodze (data wysyłki, przewoźnik, numer przesyłki). |
 | **Sprzedane** | Zakończone sprzedaże bez zwrotu, z przychodem i zyskiem (gdy podasz cenę zakupu). |
 
@@ -26,7 +26,9 @@ Każdy przycisk przenosi przedmiot do następnej zakładki. W menu **⋮** są d
 ## Funkcje
 
 - **Kategorie według uznania**: dodajesz, zmieniasz nazwę i kolor, usuwasz. Są wspólne dla wszystkich zakładek, a filtrujesz je jednym kliknięciem.
-- **Ilości**: jeśli masz np. 5 takich samych koszulek i ktoś zamówi 1, aplikacja sama rozdzieli pozycję (1 szt. idzie do wysłania, 4 zostają wystawione). Po anulowaniu zamówienia sztuki wracają na miejsce.
+- **Ilości i partie**: jeśli masz np. paletę 370 par butów, możesz wystawiać ją kartonami. W oknie „Wystaw” podajesz ilość i **miejsce w magazynie** (np. *karton 1*), a reszta zostaje na stanie. Gdy ktoś zamówi 1 szt., aplikacja sama rozdzieli pozycję. Po anulowaniu zamówienia sztuki wracają na miejsce.
+- **Spis partii**: w edycji wystawionego przedmiotu (lub przez menu ⋮ → „Spis partii”) wpisujesz konkretne przedmioty z partii i ich ceny. Enter przechodzi do następnego pola, więc spis wpisuje się szybko.
+- **Nazwa produktu przy zamówieniu**: w oknie „Zamówione” wpisujesz nazwę konkretnego produktu albo **wybierasz go ze spisu**. Wtedy nazwa i cena uzupełniają się same, a pozycja znika ze spisu (i wraca do niego, jeśli anulujesz zamówienie).
 - **Wyszukiwarka** (działa też bez polskich znaków), sortowanie oraz filtry statusu i okresu (np. „Ten miesiąc” w Sprzedanych).
 - **Statystyki** w każdej zakładce: liczba sztuk, wartość ofert, zamówienia po terminie, przychód i zysk.
 - **Zaznaczanie wielu**: np. wszystkie paczki z „Do wysłania” oznaczysz jako wysłane jednym ruchem.

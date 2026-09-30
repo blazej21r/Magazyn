@@ -26,8 +26,8 @@
   const VIEWS = [
     {
       id: 'magazyn', title: 'Magazyn', tone: 'stock', icon: 'box',
-      statuses: ['stock', 'listed', 'toship', 'shipped'], dateField: 'addedAt',
-      desc: 'Wszystko, co masz. Przedmiot znika stąd automatycznie, gdy oznaczysz go jako sprzedany.',
+      statuses: ['stock', 'listed'], dateField: 'addedAt',
+      desc: 'Wszystko, co masz na stanie — także wystawione. Zamówione przedmioty przechodzą do zakładki „Do wysłania”.',
     },
     {
       id: 'wystawione', title: 'Wystawione', heading: 'Wystawione przedmioty', tone: 'listed', icon: 'tag',
@@ -59,18 +59,19 @@
 
   const MONEY_FIELDS = new Set(['purchasePrice', 'listPrice', 'salePrice']);
   const EDITABLE_FIELDS = [
-    'name', 'location', 'notes', 'purchasePrice', 'addedAt',
+    'name', 'variant', 'location', 'notes', 'purchasePrice', 'addedAt',
     'listedAt', 'listPrice', 'platform',
     'orderedAt', 'buyer', 'salePrice', 'shipBy',
     'shippedAt', 'carrier', 'tracking',
     'soldAt',
   ];
   const MOVE_FIELDS = {
-    listed: ['listPrice', 'listedAt', 'platform'],
-    toship: ['orderedAt', 'salePrice', 'buyer', 'shipBy'],
+    listed: ['listPrice', 'listedAt', 'platform', 'location'],
+    toship: ['variant', 'orderedAt', 'salePrice', 'buyer', 'shipBy'],
     shipped: ['shippedAt', 'carrier', 'tracking'],
-    sold: ['soldAt', 'salePrice'],
+    sold: ['variant', 'soldAt', 'salePrice'],
   };
+  const MONEY_PATTERN = '[0-9 ]+([.,][0-9]{1,2})?';
 
   const SORTS = [
     ['newest', 'Najnowsze'],
@@ -185,10 +186,18 @@
     return { version: 1, categories: [], items: [] };
   }
 
+  /** Pozycja spisu partii: konkretny przedmiot z partii (np. „Nike Air Force 42”) z własną ceną. */
+  function normalizeSpisEntry(e) {
+    return e && str(e.name) ? { id: str(e.id) || uid(), name: str(e.name), price: num(e.price) } : null;
+  }
+
   function normalizeItem(i, catIds = new Set(data.categories.map((c) => c.id))) {
     return {
       id: str(i.id) || uid(),
       name: str(i.name),
+      variant: str(i.variant),
+      spis: (Array.isArray(i.spis) ? i.spis : []).map(normalizeSpisEntry).filter(Boolean),
+      spisEntry: normalizeSpisEntry(i.spisEntry),
       categoryId: catIds.has(i.categoryId) ? i.categoryId : null,
       qty: clampInt(i.qty, 1, 999999),
       status: STATUS[i.status] ? i.status : 'stock',
@@ -274,6 +283,8 @@
   }
 
   const getItem = (id) => data.items.find((i) => i.id === id);
+  /** Nazwa wyświetlana: „nazwa przedmiotu - nazwa produktu”, np. „buty C folia - nike air force”. */
+  const displayName = (i) => (i.variant ? `${i.name} - ${i.variant}` : i.name);
   const catById = (id) => (id ? data.categories.find((c) => c.id === id) : null);
   const inView = (i, viewId) => VIEW[viewId].statuses.includes(i.status);
   const viewItems = (viewId) => data.items.filter((i) => inView(i, viewId));
@@ -320,7 +331,8 @@
 
   /** Odłącza część sztuk do nowego rekordu (np. 1 z 5 wystawionych zostaje zamówiona). */
   function splitOff(item, qty) {
-    const rec = { ...item, id: uid(), qty, splitFrom: item.id, createdAt: nowISO(), updatedAt: nowISO() };
+    // Spis partii zostaje przy partii — nowy rekord dostaje co najwyżej wybraną pozycję (zob. applyMove)
+    const rec = { ...item, id: uid(), qty, spis: [], spisEntry: null, splitFrom: item.id, createdAt: nowISO(), updatedAt: nowISO() };
     item.qty -= qty;
     item.updatedAt = nowISO();
     data.items.push(rec);
@@ -333,6 +345,7 @@
     const origin = getItem(rec.splitFrom);
     if (!origin || origin === rec || origin.status !== rec.status) return;
     origin.qty += rec.qty;
+    origin.spis = origin.spis.concat(rec.spis);
     origin.updatedAt = nowISO();
     data.items = data.items.filter((x) => x !== rec);
   }
@@ -344,9 +357,23 @@
     Object.assign(i, { shippedAt: '', carrier: '', tracking: '' });
   }
 
+  /** Zwraca pozycję wziętą ze spisu z powrotem do spisu (np. po anulowaniu zamówienia). */
+  function restoreSpisEntry(i) {
+    if (!i.spisEntry) return;
+    i.spis = i.spis.concat(i.spisEntry);
+    i.spisEntry = null;
+    i.variant = '';
+  }
+
   function applyMove(item, target, values, qty) {
     const rec = qty && qty < item.qty ? splitOff(item, qty) : item;
     for (const key of MOVE_FIELDS[target]) if (key in values) rec[key] = values[key];
+    // Produkt wybrany ze spisu przechodzi razem z zamówieniem i znika ze spisu partii
+    const entry = values.spisId && item.spis.find((e) => e.id === values.spisId);
+    if (entry) {
+      item.spis = item.spis.filter((e) => e !== entry);
+      rec.spisEntry = entry;
+    }
     if ((target === 'toship' || target === 'sold') && rec.salePrice == null) rec.salePrice = rec.listPrice;
     setStatus(rec, target);
     return rec;
@@ -362,7 +389,9 @@
 
   function searchText(i) {
     const cat = catById(i.categoryId);
-    return [i.name, i.notes, i.location, i.buyer, i.tracking, i.platform, i.carrier, cat && cat.name].join(' ');
+    return [i.name, i.variant, i.notes, i.location, i.buyer, i.tracking, i.platform, i.carrier, cat && cat.name]
+      .concat(i.spis.map((e) => e.name))
+      .join(' ');
   }
 
   function inPeriod(s, period) {
@@ -432,7 +461,7 @@
     const cmp = {
       newest: (a, b) => dateKey(b).localeCompare(dateKey(a)),
       oldest: (a, b) => dateKey(a).localeCompare(dateKey(b)),
-      name: (a, b) => a.name.localeCompare(b.name, 'pl', { sensitivity: 'base', numeric: true }),
+      name: (a, b) => displayName(a).localeCompare(displayName(b), 'pl', { sensitivity: 'base', numeric: true }),
       priceDesc: byPrice(-1),
       priceAsc: byPrice(1),
       deadline: (a, b) => (a.shipBy || '9999').localeCompare(b.shipBy || '9999') || dateKey(a).localeCompare(dateKey(b)),
@@ -444,13 +473,14 @@
 
   const ACTIONS = {
     edit: { label: 'Edytuj', icon: 'pencil', run: (i) => openItemForm(i) },
+    spis: { label: 'Spis partii', icon: 'listChecks', run: (i) => openItemForm(i, { focusSpis: true }) },
     list: { label: 'Wystaw na sprzedaż', short: 'Wystaw', icon: 'tag', target: 'listed', run: (i) => openMoveDialog([i], 'listed') },
     order: { label: 'Zamówione → Do wysłania', short: 'Zamówione', icon: 'clipboard', target: 'toship', run: (i) => openMoveDialog([i], 'toship') },
     ship: { label: 'Oznacz jako wysłane', short: 'Wysłane', icon: 'truck', target: 'shipped', run: (i) => openMoveDialog([i], 'shipped') },
     sell: { label: 'Oznacz jako sprzedane', short: 'Sprzedane', icon: 'check', target: 'sold', run: (i) => openMoveDialog([i], 'sold') },
     unlist: {
       label: 'Zdejmij z wystawienia', icon: 'undo',
-      run: (i) => commit(`„${i.name}” zdjęto z wystawienia`, () => {
+      run: (i) => commit(`„${displayName(i)}” zdjęto z wystawienia`, () => {
         i.listedAt = '';
         setStatus(i, 'stock');
         mergeBack(i);
@@ -458,8 +488,9 @@
     },
     cancel: {
       label: 'Anuluj zamówienie', icon: 'undo',
-      run: (i) => commit(`Anulowano zamówienie „${i.name}”`, () => {
+      run: (i) => commit(`Anulowano zamówienie „${displayName(i)}”`, () => {
         clearOrder(i);
+        restoreSpisEntry(i);
         setStatus(i, i.listedAt ? 'listed' : 'stock');
         mergeBack(i);
       }),
@@ -468,7 +499,7 @@
     duplicate: { label: 'Duplikuj', icon: 'copy', run: (i) => duplicateItem(i) },
     remove: {
       label: 'Usuń', icon: 'trash', danger: true,
-      run: (i) => commit(`Usunięto „${i.name}”`, () => {
+      run: (i) => commit(`Usunięto „${displayName(i)}”`, () => {
         data.items = data.items.filter((x) => x.id !== i.id);
       }),
     },
@@ -476,7 +507,7 @@
 
   const STATUS_ACTIONS = {
     stock: { primary: 'list', menu: ['edit', 'list', 'order', 'sell', 'duplicate', '-', 'remove'] },
-    listed: { primary: 'order', menu: ['edit', 'order', 'sell', 'unlist', 'duplicate', '-', 'remove'] },
+    listed: { primary: 'order', menu: ['edit', 'spis', 'order', 'sell', 'unlist', 'duplicate', '-', 'remove'] },
     toship: { primary: 'ship', menu: ['edit', 'ship', 'cancel', '-', 'remove'] },
     shipped: { primary: 'sell', menu: ['edit', 'sell', 'back', '-', 'remove'] },
     sold: { primary: null, menu: ['edit', 'back', 'duplicate', '-', 'remove'] },
@@ -485,9 +516,9 @@
   const BULK_PRIMARY = { 'do-wyslania': 'ship', wyslane: 'sell' };
 
   function duplicateItem(i) {
-    commit(`Dodano kopię „${i.name}” do Magazynu`, () => {
+    commit(`Dodano kopię „${displayName(i)}” do Magazynu`, () => {
       data.items.push(normalizeItem({
-        name: i.name, categoryId: i.categoryId, qty: i.qty, location: i.location, notes: i.notes,
+        name: i.name, variant: i.variant, categoryId: i.categoryId, qty: i.qty, location: i.location, notes: i.notes,
         purchasePrice: i.purchasePrice, listPrice: i.listPrice, platform: i.platform,
         status: 'stock', addedAt: today(),
       }));
@@ -687,6 +718,7 @@
     const add = (label, value, cls = '') => {
       if (value != null && value !== '') m.push({ label, value, cls });
     };
+    const spisText = i.spis.length ? `${i.spis.length} ${posWord(i.spis.length)} z ${i.qty} szt.` : '';
     const deadline = () => {
       if (!i.shipBy) return;
       if (isOverdue(i)) add('Wyślij do', `${fmtDate(i.shipBy)} — po terminie`, 'late');
@@ -697,12 +729,12 @@
       case 'magazyn':
         add('Dodano', dateWithAgo(i.addedAt));
         if (i.status === 'listed') { add('Wystawiono', fmtDate(i.listedAt)); add('Gdzie', i.platform); }
-        if (i.status === 'toship') { add('Zamówiono', fmtDate(i.orderedAt)); deadline(); }
-        if (i.status === 'shipped') add('Wysłano', fmtDate(i.shippedAt));
+        add('Spis', spisText);
         break;
       case 'wystawione':
         add('Wystawiono', dateWithAgo(i.listedAt));
         add('Gdzie', i.platform);
+        add('Spis', spisText);
         add('Dodano', fmtDate(i.addedAt));
         break;
       case 'do-wyslania':
@@ -756,9 +788,9 @@
 
     return `
       <article class="item ${selected ? 'is-selected' : ''} ${isOverdue(i) ? 'is-late' : ''}" data-id="${esc(i.id)}">
-        <label class="item-check"><input type="checkbox" data-act="toggle-select" ${selected ? 'checked' : ''} aria-label="Zaznacz: ${esc(i.name)}"></label>
-        <div class="item-main" data-act="open" role="button" tabindex="0" aria-label="${ui.selecting ? 'Zaznacz' : 'Szczegóły'}: ${esc(i.name)}">
-          <div class="item-title"><h3>${esc(i.name)}</h3>${i.qty > 1 ? `<span class="qty">${i.qty} szt.</span>` : ''}</div>
+        <label class="item-check"><input type="checkbox" data-act="toggle-select" ${selected ? 'checked' : ''} aria-label="Zaznacz: ${esc(displayName(i))}"></label>
+        <div class="item-main" data-act="open" role="button" tabindex="0" aria-label="${ui.selecting ? 'Zaznacz' : 'Szczegóły'}: ${esc(displayName(i))}">
+          <div class="item-title"><h3>${esc(displayName(i))}</h3>${i.qty > 1 ? `<span class="qty">${i.qty} szt.</span>` : ''}</div>
           ${flags.length ? `<div class="item-flags">${flags.join('')}</div>` : ''}
           ${meta.length ? `<dl class="item-meta">${meta.map((x) => `<div class="${x.cls}"><dt>${x.label}</dt><dd>${esc(x.value)}</dd></div>`).join('')}</dl>` : ''}
           ${i.notes ? `<p class="item-notes">${esc(i.notes)}</p>` : ''}
@@ -767,7 +799,7 @@
           <div class="price">${priceHTML}</div>
           <div class="item-actions">
             ${primary ? `<button type="button" class="btn small act tone-${STATUS_TONE[primary.target]}" data-act="${acts.primary}" title="${esc(primary.label)}">${icon(primary.icon)}<span>${primary.short}</span></button>` : ''}
-            <button type="button" class="icon-btn" data-act="menu" aria-label="Więcej akcji: ${esc(i.name)}" title="Więcej akcji">${icon('more')}</button>
+            <button type="button" class="icon-btn" data-act="menu" aria-label="Więcej akcji: ${esc(displayName(i))}" title="Więcej akcji">${icon('more')}</button>
           </div>
         </div>
       </article>`;
@@ -914,7 +946,7 @@
   function openItemMenu(item, anchor) {
     const menu = $('#menu');
     const backdrop = $('#menuBackdrop');
-    menu.innerHTML = `<div class="menu-title">${esc(item.name)}</div>` + STATUS_ACTIONS[item.status].menu.map((key) => {
+    menu.innerHTML = `<div class="menu-title">${esc(displayName(item))}</div>` + STATUS_ACTIONS[item.status].menu.map((key) => {
       if (key === '-') return '<hr>';
       const a = ACTIONS[key];
       return `<button type="button" role="menuitem" class="${a.danger ? 'danger' : ''}" data-menu="${key}">${icon(a.icon)}<span>${a.label}</span></button>`;
@@ -970,9 +1002,13 @@
       if (onSubmit(form, e.submitter) !== false) dlg.close();
     });
     $$('[data-close]', dlg).forEach((b) => b.addEventListener('click', () => dlg.close()));
-    $$('input[data-money]', form).forEach((inp) => {
-      inp.addEventListener('invalid', () => inp.setCustomValidity(inp.validity.valueMissing ? 'Podaj kwotę.' : 'Podaj kwotę, np. 49,99'));
-      inp.addEventListener('input', () => inp.setCustomValidity(''));
+    // Czytelny komunikat dla pól z kwotą (także tych dodanych później, np. w spisie partii)
+    form.addEventListener('invalid', (e) => {
+      const inp = e.target;
+      if (inp.matches('[data-money]')) inp.setCustomValidity(inp.validity.valueMissing ? 'Podaj kwotę.' : 'Podaj kwotę, np. 49,99');
+    }, true);
+    form.addEventListener('input', (e) => {
+      if (e.target.matches('[data-money]')) e.target.setCustomValidity('');
     });
     if (onMount) onMount(form);
     if (!dlg.open) dlg.showModal();
@@ -1035,7 +1071,7 @@
   function moneyField(name, label, value, o = {}) {
     return field(name, label, `<div class="affix"><input ${attrs({
       type: 'text', inputmode: 'decimal', id: `f-${name}`, name, value: value == null ? '' : moneyInput(value),
-      required: o.required, placeholder: '0,00', pattern: '[0-9 ]+([.,][0-9]{1,2})?', 'data-money': true, autocomplete: 'off',
+      required: o.required, placeholder: '0,00', pattern: MONEY_PATTERN, 'data-money': true, autocomplete: 'off',
     })}><span>zł</span></div>`, o);
   }
   function dateField(name, label, value, o = {}) {
@@ -1107,6 +1143,7 @@
     };
     const reached = (s) => FLOW.indexOf(it.status) >= FLOW.indexOf(s);
     const listRequired = isNew || it.status === 'listed';
+    const showSpis = !isNew && it.status === 'listed';
 
     const listSection = `
       <fieldset class="section" id="secListed" ${isNew && !preset.listNow ? 'hidden disabled' : ''}>
@@ -1122,6 +1159,9 @@
       ${datalists()}
       <div class="form-grid">
         ${textField('name', 'Nazwa przedmiotu', it.name, { required: true, full: true, placeholder: 'np. Kurtka zimowa Nike, rozm. M' })}
+        ${it.variant || reached('toship') ? textField('variant', 'Nazwa produktu (z partii)', it.variant, {
+          full: true, placeholder: 'np. Nike Air Force 42', hint: 'wyświetla się jako „nazwa przedmiotu - nazwa produktu”',
+        }) : ''}
         ${categoryField(it.categoryId)}
         ${qtyField('qty', 'Ilość (szt.)', it.qty)}
         ${textField('location', 'Miejsce w magazynie', it.location, { placeholder: 'np. półka A2, karton 3', list: 'dl-locations' })}
@@ -1131,6 +1171,7 @@
       </div>
       ${isNew ? `<label class="check-row"><input type="checkbox" name="listNow" ${preset.listNow ? 'checked' : ''}> Od razu wystaw na sprzedaż</label>` : ''}
       ${isNew || reached('listed') ? listSection : ''}
+      ${showSpis ? spisEditorHTML(it.spis) : ''}
       ${reached('toship') ? `
         <fieldset class="section"><legend>${it.status === 'sold' && !it.orderedAt ? 'Sprzedaż' : 'Zamówienie'}</legend>
           <div class="form-grid">
@@ -1162,6 +1203,7 @@
       focus: isNew ? '#f-name' : null,
       onMount(form) {
         bindCategorySelect(form);
+        bindSpisEditor(form);
         const cb = form.elements.listNow;
         if (cb) {
           cb.addEventListener('change', () => {
@@ -1181,6 +1223,7 @@
           patch.categoryId = resolveCategory(v);
           createdCategoryId = patch.categoryId;
           patch.qty = clampInt(v.qty, 1, 999999);
+          if (showSpis) patch.spis = readSpis(form);
           if (isNew) {
             data.items.push(normalizeItem({ ...patch, status: v.listNow ? 'listed' : 'stock' }));
           } else {
@@ -1193,6 +1236,92 @@
         }
       },
     });
+
+    if (preset.focusSpis && showSpis) {
+      const sec = $('#dialog #secSpis');
+      if (!$('.spis-row', sec)) $('[data-spis="add"]', sec).click();
+      else $('.spis-row:last-child .spis-name', sec).focus();
+      sec.scrollIntoView({ block: 'start' });
+    }
+  }
+
+  /* ---------- Spis partii ---------- */
+
+  function spisRowHTML(e = {}) {
+    return `
+      <div class="spis-row" data-id="${esc(e.id || uid())}">
+        <input type="text" class="spis-name" value="${esc(e.name || '')}" placeholder="np. Nike Air Force 42" maxlength="120" aria-label="Nazwa przedmiotu ze spisu" enterkeyhint="next" autocomplete="off">
+        <div class="affix">
+          <input type="text" class="spis-price" inputmode="decimal" value="${e.price == null ? '' : moneyInput(e.price)}" placeholder="cena" pattern="${MONEY_PATTERN}" data-money aria-label="Cena" enterkeyhint="next" autocomplete="off"><span>zł</span>
+        </div>
+        <button type="button" class="icon-btn" data-spis="remove" aria-label="Usuń pozycję ze spisu" title="Usuń">${icon('trash')}</button>
+      </div>`;
+  }
+
+  function spisEditorHTML(spis) {
+    return `
+      <fieldset class="section" id="secSpis">
+        <legend>Spis partii</legend>
+        <p class="small muted section-note">Wpisz konkretne przedmioty z tej partii i ich ceny. Przy zamówieniu wybierzesz je z listy, a nazwa i cena uzupełnią się same.</p>
+        <div class="spis-list">${spis.map(spisRowHTML).join('')}</div>
+        <div class="spis-foot">
+          <button type="button" class="btn small" data-spis="add">${icon('plus')}<span></span></button>
+          <span class="small muted" data-spis-count></span>
+        </div>
+      </fieldset>`;
+  }
+
+  function bindSpisEditor(form) {
+    const sec = $('#secSpis', form);
+    if (!sec) return;
+    const list = $('.spis-list', sec);
+    const update = () => {
+      const n = $$('.spis-row', list).length;
+      const qty = clampInt(form.elements.qty && form.elements.qty.value, 1, 999999);
+      $('[data-spis="add"] span', sec).textContent = n ? 'Dodaj pozycję' : 'Dodaj spis';
+      $('[data-spis-count]', sec).textContent = n ? `${n} ${posWord(n)} w spisie · w partii: ${qty} szt.` : '';
+    };
+    const addRow = () => {
+      list.insertAdjacentHTML('beforeend', spisRowHTML());
+      update();
+      $('.spis-name', list.lastElementChild).focus();
+    };
+    sec.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-spis]');
+      if (!b) return;
+      if (b.dataset.spis === 'add') addRow();
+      else {
+        b.closest('.spis-row').remove();
+        update();
+      }
+    });
+    // Enter: z nazwy do ceny, z ceny do kolejnej pozycji (nowej, jeśli to ostatnia)
+    sec.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const row = e.target.closest('.spis-row');
+      if (!row) return;
+      e.preventDefault();
+      if (e.target.matches('.spis-name')) $('.spis-price', row).focus();
+      else if (row === list.lastElementChild) addRow();
+      else $('.spis-name', row.nextElementSibling).focus();
+    });
+    if (form.elements.qty) form.elements.qty.addEventListener('input', update);
+    update();
+  }
+
+  function readSpis(form) {
+    return $$('#secSpis .spis-row', form)
+      .map((row) => ({ id: row.dataset.id, name: $('.spis-name', row).value.trim(), price: parseMoney($('.spis-price', row).value) }))
+      .filter((e) => e.name);
+  }
+
+  function spisPickerField(item) {
+    const opts = item.spis.map((e) => `<option value="${esc(e.id)}">${esc(e.name)}${e.price != null ? ` — ${esc(fmtMoney(e.price))}` : ''}</option>`).join('');
+    return field('spisId', 'Wybierz ze spisu', `
+      <select id="f-spisId" name="spisId">
+        <option value="">— wybierz przedmiot z partii —</option>
+        ${opts}
+      </select>`, { full: true, hint: `${item.spis.length} ${posWord(item.spis.length)} w spisie — wybór uzupełni nazwę i cenę` });
   }
 
   /* ---------- Przenoszenie między zakładkami ---------- */
@@ -1207,23 +1336,40 @@
     );
     const qtyDefault = target === 'listed' ? single?.qty : 1;
 
+    // Wybór konkretnego produktu z partii — przy zamówieniu albo sprzedaży prosto z magazynu
+    const pickProduct = !!single && (target === 'toship' || target === 'sold') && (single.status === 'stock' || single.status === 'listed');
+    const productFields = () => {
+      if (!pickProduct) return [];
+      const out = [];
+      if (single.spis.length) out.push(spisPickerField(single));
+      out.push(textField('variant', 'Nazwa produktu', single.variant, {
+        full: true, placeholder: 'np. Nike Air Force 42', hint: `wyświetli się jako „${single.name} - …”`,
+      }));
+      return out;
+    };
+    const qtyHTML = qtyAllowed ? qtyField('qty', 'Ile sztuk?', qtyDefault, { max: single.qty, hint: `dostępne: ${single.qty} szt.` }) : '';
+
     const fields = [];
-    if (qtyAllowed) {
-      fields.push(qtyField('qty', 'Ile sztuk?', qtyDefault, { max: single.qty, hint: `dostępne: ${single.qty} szt.` }));
-    }
     let title = '';
     let submitText = '';
     switch (target) {
       case 'listed':
         title = 'Wystaw na sprzedaż';
         submitText = 'Wystaw';
+        fields.push(qtyHTML);
         fields.push(moneyField('listPrice', 'Cena wystawienia (za szt.)', single?.listPrice, { required: true }));
         fields.push(dateField('listedAt', 'Data wystawienia', t, { required: true }));
-        fields.push(textField('platform', 'Gdzie wystawione', single?.platform, { list: 'dl-platforms', placeholder: 'np. OLX, Vinted, Allegro', full: !qtyAllowed }));
+        if (single) {
+          fields.push(textField('location', 'Miejsce w magazynie', single.location, {
+            list: 'dl-locations', placeholder: 'np. karton 1', hint: qtyAllowed ? 'gdzie leży wystawiana partia' : '',
+          }));
+        }
+        fields.push(textField('platform', 'Gdzie wystawione', single?.platform, { list: 'dl-platforms', placeholder: 'np. OLX, Vinted, Allegro', full: !!qtyAllowed }));
         break;
       case 'toship':
         title = 'Zamówione — do wysłania';
         submitText = 'Przenieś do „Do wysłania”';
+        fields.push(...productFields(), qtyHTML);
         fields.push(moneyField('salePrice', 'Cena sprzedaży (za szt.)', single ? (single.salePrice ?? single.listPrice) : null));
         fields.push(dateField('orderedAt', 'Data zamówienia', t, { required: true }));
         fields.push(textField('buyer', 'Kupujący', '', { placeholder: 'np. nick lub imię' }));
@@ -1239,6 +1385,7 @@
       case 'sold':
         title = 'Oznacz jako sprzedane';
         submitText = 'Sprzedane';
+        fields.push(...productFields(), qtyHTML);
         fields.push(dateField('soldAt', 'Data sprzedaży', t, { required: true }));
         if (single) fields.push(moneyField('salePrice', 'Cena sprzedaży (za szt.)', single.salePrice ?? single.listPrice));
         break;
@@ -1247,24 +1394,42 @@
     }
 
     const lead = single
-      ? `${esc(single.name)}${single.qty > 1 ? ` <span class="muted">· ${single.qty} szt.</span>` : ''}`
+      ? `${esc(displayName(single))}${single.qty > 1 ? ` <span class="muted">· ${single.qty} szt.</span>` : ''}${single.location ? ` <span class="muted">· ${esc(single.location)}</span>` : ''}`
       : `Zaznaczone: ${items.length} ${posWord(items.length)}`;
-    const note = target === 'sold'
-      ? '<p class="small muted" style="margin:14px 0 0">Sprzedany przedmiot zniknie z Magazynu. Jeśli wróci jako zwrot, użyj „Zwrot do magazynu”.</p>'
-      : '';
+    let note = '';
+    if (target === 'sold') {
+      note = 'Sprzedany przedmiot zniknie z Magazynu. Jeśli wróci jako zwrot, użyj „Zwrot do magazynu”.';
+    } else if (pickProduct && !single.spis.length && single.qty > 1 && single.status === 'listed') {
+      note = 'Wskazówka: dodaj spis partii (menu ⋮ → „Spis partii”), a przy zamówieniu wybierzesz produkt z listy razem z ceną.';
+    }
 
     openDialog({
       title,
-      body: `${datalists()}<p class="dlg-lead">${lead}</p><div class="form-grid">${fields.join('')}</div>${note}`,
+      body: `${datalists()}<p class="dlg-lead">${lead}</p><div class="form-grid">${fields.filter(Boolean).join('')}</div>${note ? `<p class="small muted" style="margin:14px 0 0">${esc(note)}</p>` : ''}`,
       submitText,
       submitClass: 'primary',
+      onMount(form) {
+        const picker = form.elements.spisId;
+        if (!picker) return;
+        picker.addEventListener('change', () => {
+          const entry = single.spis.find((e) => e.id === picker.value);
+          if (!entry) return;
+          form.elements.variant.value = entry.name;
+          if (form.elements.salePrice) {
+            const price = entry.price ?? single.listPrice;
+            form.elements.salePrice.value = price == null ? '' : moneyInput(price);
+          }
+        });
+      },
       onSubmit(form) {
         const v = readForm(form);
         const qty = qtyAllowed ? clampInt(v.qty, 1, single.qty) : null;
         const label = STATUS[target];
-        const msg = single
-          ? (qty && qty < single.qty ? `${qty} szt. „${single.name}” → ${label}` : `„${single.name}” → ${label}`)
-          : `${items.length} ${posWord(items.length)} → ${label}`;
+        let msg = `${items.length} ${posWord(items.length)} → ${label}`;
+        if (single) {
+          const name = 'variant' in v ? (v.variant ? `${single.name} - ${v.variant}` : single.name) : displayName(single);
+          msg = qty && qty < single.qty ? `${qty} szt. „${name}” → ${label}` : `„${name}” → ${label}`;
+        }
         commit(msg, () => {
           for (const it of items) {
             const cur = getItem(it.id);
@@ -1281,19 +1446,20 @@
     openDialog({
       title: 'Zwrot do magazynu',
       body: `
-        <p class="dlg-lead">${esc(item.name)}${item.qty > 1 ? ` <span class="muted">· ${item.qty} szt.</span>` : ''}</p>
+        <p class="dlg-lead">${esc(displayName(item))}${item.qty > 1 ? ` <span class="muted">· ${item.qty} szt.</span>` : ''}</p>
         <p class="small muted" style="margin:0 0 14px">Przedmiot wróci do Magazynu jako „Na stanie”. Dane zamówienia i wysyłki zostaną wyczyszczone.</p>
         <div class="form-grid">${dateField('returnedAt', 'Data zwrotu', today(), { required: true })}</div>
         ${canRelist ? `<label class="check-row"><input type="checkbox" name="relist"> Wystaw ponownie za ${esc(fmtMoney(item.listPrice))}</label>` : ''}`,
       submitText: 'Przyjmij zwrot',
       onSubmit(form) {
         const v = readForm(form);
-        commit(`Przyjęto zwrot „${item.name}”`, () => {
+        commit(`Przyjęto zwrot „${displayName(item)}”`, () => {
           const cur = getItem(item.id);
           if (!cur) return;
           clearOrder(cur);
           clearShipping(cur);
           cur.soldAt = '';
+          cur.spisEntry = null; // zwrócony przedmiot jest już osobną pozycją z własną nazwą
           cur.returnedAt = v.returnedAt || today();
           if (v.relist) {
             cur.listedAt = today();
@@ -1563,6 +1729,7 @@
     const n = (v) => (v == null ? '' : String(v).replace('.', ','));
     const cols = [
       ['Nazwa', (i) => i.name],
+      ['Produkt z partii', (i) => i.variant],
       ['Kategoria', (i) => catById(i.categoryId)?.name || ''],
       ['Status', (i) => STATUS[i.status]],
       ['Ilość', (i) => i.qty],
@@ -1582,6 +1749,7 @@
       ['Data sprzedaży', (i) => i.soldAt],
       ['Data zwrotu', (i) => i.returnedAt],
       ['Notatki', (i) => i.notes],
+      ['Spis partii', (i) => i.spis.map((e) => (e.price != null ? `${e.name} (${n(e.price)} zł)` : e.name)).join(', ')],
     ];
     const cell = (v) => {
       let s = String(v ?? '');
