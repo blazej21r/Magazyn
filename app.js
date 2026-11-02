@@ -60,13 +60,13 @@
   const MONEY_FIELDS = new Set(['purchasePrice', 'listPrice', 'salePrice']);
   const EDITABLE_FIELDS = [
     'name', 'variant', 'location', 'notes', 'purchasePrice', 'addedAt',
-    'listedAt', 'listPrice', 'platform',
+    'listedAt', 'listPrice', 'platform', 'url',
     'orderedAt', 'buyer', 'salePrice', 'shipBy',
     'shippedAt', 'carrier', 'tracking',
     'soldAt',
   ];
   const MOVE_FIELDS = {
-    listed: ['listPrice', 'listedAt', 'platform', 'location'],
+    listed: ['listPrice', 'listedAt', 'platform', 'location', 'url'],
     toship: ['variant', 'orderedAt', 'salePrice', 'buyer', 'shipBy'],
     shipped: ['shippedAt', 'carrier', 'tracking'],
     sold: ['variant', 'soldAt', 'salePrice'],
@@ -112,6 +112,13 @@
     sheet: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>',
     listChecks: '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
     phone: '<rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/>',
+    refresh: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+    message: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+    link: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+    heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
+    plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+    inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     searchX: '<path d="m13.5 8.5-5 5"/><path d="m8.5 8.5 5 5"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   };
 
@@ -178,17 +185,60 @@
 
   /* ======================= Dane ======================= */
 
+  const DEFAULT_SETTINGS = { refreshDays: 14, discount: 10 };
+  const DEFAULT_TEMPLATES = [
+    { id: 'tpl-thanks', name: 'Podziękowanie za zakup', text: 'Dzień dobry {kupujacy}! Dziękuję za zakup „{nazwa}”. Wyślę paczkę najszybciej, jak to możliwe, i dam znać, gdy będzie w drodze. Pozdrawiam!' },
+    { id: 'tpl-shipped', name: 'Paczka wysłana', text: 'Paczka z „{nazwa}” jest już w drodze ({przewoznik}). Numer przesyłki: {numer}. Miłego dnia!' },
+    { id: 'tpl-offer', name: 'Oferta dla obserwujących', text: 'Cześć! Widzę, że „{nazwa}” jest w Twoich ulubionych. Mogę go oddać za {cena_rabat} zamiast {cena}. Daj znać, jeśli chcesz skorzystać!' },
+    { id: 'tpl-confirm', name: 'Prośba o potwierdzenie odbioru', text: 'Dzień dobry! Paczka powinna już do Ciebie dotrzeć. Jeśli wszystko jest w porządku, potwierdź proszę odbiór na Vinted. Dziękuję!' },
+    { id: 'tpl-condition', name: 'Odpowiedź o stan', text: 'Dzień dobry! „{nazwa}” jest w bardzo dobrym stanie, bez wad. Chętnie odpowiem na inne pytania.' },
+  ];
+
+  const safeUrl = (u) => (/^https?:\/\/[^\s"'<>]+$/i.test(str(u)) ? str(u) : '');
+  /** Numer ogłoszenia Vinted z linku, np. https://www.vinted.pl/items/1234567-buty → „1234567”. */
+  const vintedIdFromUrl = (u) => {
+    const m = /vinted\.[a-z.]+\/items\/(\d+)/i.exec(str(u));
+    return m ? m[1] : '';
+  };
+  const count = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Math.max(0, Math.round(Number(v))));
+
   let storageOk = true;
   let data = loadData();
   const prefs = loadPrefs();
 
   function emptyData() {
-    return { version: 1, categories: [], items: [] };
+    return { version: 1, categories: [], items: [], templates: DEFAULT_TEMPLATES.map((t) => ({ ...t })), settings: { ...DEFAULT_SETTINGS }, imports: [] };
   }
 
   /** Pozycja spisu partii: konkretny przedmiot z partii (np. „Nike Air Force 42”) z własną ceną. */
   function normalizeSpisEntry(e) {
-    return e && str(e.name) ? { id: str(e.id) || uid(), name: str(e.name), price: num(e.price) } : null;
+    if (!e || !str(e.name)) return null;
+    const url = safeUrl(e.url);
+    return { id: str(e.id) || uid(), name: str(e.name), price: num(e.price), url, vintedId: str(e.vintedId) || vintedIdFromUrl(url) };
+  }
+
+  /** Import z wtyczki „MyMagazine dla Vinted”: ogłoszenie albo zamówienie, czekające na decyzję. */
+  function normalizeImport(x) {
+    if (!x || !str(x.title) || !['listing', 'order'].includes(x.type)) return null;
+    const url = safeUrl(x.url);
+    return {
+      id: str(x.id) || uid(),
+      type: x.type,
+      createdAt: str(x.createdAt) || nowISO(),
+      title: str(x.title).slice(0, 200),
+      price: num(x.price),
+      url,
+      vintedId: str(x.vintedId) || vintedIdFromUrl(url),
+      replaces: str(x.replaces),
+      photo: safeUrl(x.photo),
+      description: str(x.description).slice(0, 2000),
+      brand: str(x.brand).slice(0, 80),
+      size: str(x.size).slice(0, 40),
+      condition: str(x.condition).slice(0, 60),
+      buyer: str(x.buyer).slice(0, 80),
+      views: count(x.views),
+      favs: count(x.favs),
+    };
   }
 
   function normalizeItem(i, catIds = new Set(data.categories.map((c) => c.id))) {
@@ -218,6 +268,12 @@
       soldAt: str(i.soldAt),
       returnedAt: str(i.returnedAt),
       splitFrom: str(i.splitFrom),
+      url: safeUrl(i.url),
+      vintedId: str(i.vintedId) || vintedIdFromUrl(i.url),
+      views: count(i.views),
+      favs: count(i.favs),
+      statsAt: str(i.statsAt),
+      repostCount: count(i.repostCount) || 0,
       createdAt: str(i.createdAt) || nowISO(),
       updatedAt: str(i.updatedAt) || nowISO(),
     };
@@ -234,7 +290,16 @@
       }));
     const catIds = new Set(categories.map((c) => c.id));
     const items = d.items.filter((i) => i && str(i.name)).map((i) => normalizeItem(i, catIds));
-    return { version: 1, categories, items };
+    const templates = Array.isArray(d.templates)
+      ? d.templates.filter((t) => t && str(t.text)).map((t) => ({ id: str(t.id) || uid(), name: str(t.name) || 'Szablon', text: str(t.text) }))
+      : DEFAULT_TEMPLATES.map((t) => ({ ...t }));
+    const st = d.settings || {};
+    const settings = {
+      refreshDays: Number.isFinite(Number(st.refreshDays)) ? clampInt(st.refreshDays, 0, 365) : DEFAULT_SETTINGS.refreshDays,
+      discount: Number.isFinite(Number(st.discount)) ? clampInt(st.discount, 0, 90) : DEFAULT_SETTINGS.discount,
+    };
+    const imports = (Array.isArray(d.imports) ? d.imports : []).map(normalizeImport).filter(Boolean);
+    return { version: 1, categories, items, templates, settings, imports };
   }
 
   function loadData() {
@@ -257,6 +322,7 @@
 
   let persistRequested = false;
   function persist() {
+    syncExtension();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       storageOk = true;
@@ -332,7 +398,10 @@
   /** Odłącza część sztuk do nowego rekordu (np. 1 z 5 wystawionych zostaje zamówiona). */
   function splitOff(item, qty) {
     // Spis partii zostaje przy partii — nowy rekord dostaje co najwyżej wybraną pozycję (zob. applyMove)
-    const rec = { ...item, id: uid(), qty, spis: [], spisEntry: null, splitFrom: item.id, createdAt: nowISO(), updatedAt: nowISO() };
+    const rec = {
+      ...item, id: uid(), qty, spis: [], spisEntry: null, views: null, favs: null, statsAt: '', repostCount: 0,
+      splitFrom: item.id, createdAt: nowISO(), updatedAt: nowISO(),
+    };
     item.qty -= qty;
     item.updatedAt = nowISO();
     data.items.push(rec);
@@ -368,6 +437,7 @@
   function applyMove(item, target, values, qty) {
     const rec = qty && qty < item.qty ? splitOff(item, qty) : item;
     for (const key of MOVE_FIELDS[target]) if (key in values) rec[key] = values[key];
+    if ('url' in values) rec.vintedId = vintedIdFromUrl(rec.url);
     // Produkt wybrany ze spisu przechodzi razem z zamówieniem i znika ze spisu partii
     const entry = values.spisId && item.spis.find((e) => e.id === values.spisId);
     if (entry) {
@@ -377,6 +447,29 @@
     if ((target === 'toship' || target === 'sold') && rec.salePrice == null) rec.salePrice = rec.listPrice;
     setStatus(rec, target);
     return rec;
+  }
+
+  /** Ogłoszenie wystawione dłużej niż ustawiona liczba dni — warto je odświeżyć (wystawić ponownie). */
+  const needsRefresh = (i) => i.status === 'listed' && data.settings.refreshDays > 0 && (daysSince(i.listedAt) ?? 0) >= data.settings.refreshDays;
+
+  /** Wypełnia szablon wiadomości danymi przedmiotu, np. {nazwa}, {cena}, {cena_rabat}, {kupujacy}. */
+  function fillTemplate(text, i) {
+    const price = i ? (i.salePrice ?? i.listPrice) : null;
+    const d = data.settings.discount;
+    const values = {
+      nazwa: i ? displayName(i) : '',
+      cena: price != null ? fmtMoney(price) : '',
+      cena_rabat: price != null ? fmtMoney(Math.round(price * (1 - d / 100))) : '',
+      rabat: `${d}%`,
+      kupujacy: i ? i.buyer : '',
+      przewoznik: i ? i.carrier : '',
+      numer: i ? i.tracking : '',
+      link: i ? i.url : '',
+    };
+    return String(text).replace(/\{([a-ząćęłńóśźż_]+)\}/gi, (m, key) => {
+      const k = norm(key);
+      return k in values ? values[k] : m;
+    });
   }
 
   function priceInfo(i) {
@@ -389,7 +482,7 @@
 
   function searchText(i) {
     const cat = catById(i.categoryId);
-    return [i.name, i.variant, i.notes, i.location, i.buyer, i.tracking, i.platform, i.carrier, cat && cat.name]
+    return [i.name, i.variant, i.notes, i.location, i.buyer, i.tracking, i.platform, i.carrier, i.vintedId, cat && cat.name]
       .concat(i.spis.map((e) => e.name))
       .join(' ');
   }
@@ -435,6 +528,7 @@
     const f = F(viewId);
     let list = viewItems(viewId);
     if (viewId === 'magazyn' && f.status !== 'all') list = list.filter((i) => i.status === f.status);
+    if (viewId === 'wystawione' && f.status === 'refresh') list = list.filter(needsRefresh);
     if (f.category === 'none') list = list.filter((i) => !i.categoryId);
     else if (f.category !== 'all') list = list.filter((i) => i.categoryId === f.category);
     if (viewId === 'sprzedane' && f.period !== 'all') list = list.filter((i) => inPeriod(i.soldAt, f.period));
@@ -496,6 +590,15 @@
       }),
     },
     back: { label: 'Zwrot do magazynu', icon: 'undo', run: (i) => openReturnDialog(i) },
+    reposted: {
+      label: 'Oznacz jako odświeżone', icon: 'refresh',
+      run: (i) => commit(`Odświeżono ogłoszenie „${displayName(i)}”`, () => {
+        i.listedAt = today();
+        i.repostCount += 1;
+        i.updatedAt = nowISO();
+      }),
+    },
+    message: { label: 'Wiadomość z szablonu', icon: 'message', run: (i) => openMessageDialog(i) },
     duplicate: { label: 'Duplikuj', icon: 'copy', run: (i) => duplicateItem(i) },
     remove: {
       label: 'Usuń', icon: 'trash', danger: true,
@@ -507,10 +610,10 @@
 
   const STATUS_ACTIONS = {
     stock: { primary: 'list', menu: ['edit', 'list', 'order', 'sell', 'duplicate', '-', 'remove'] },
-    listed: { primary: 'order', menu: ['edit', 'spis', 'order', 'sell', 'unlist', 'duplicate', '-', 'remove'] },
-    toship: { primary: 'ship', menu: ['edit', 'ship', 'cancel', '-', 'remove'] },
-    shipped: { primary: 'sell', menu: ['edit', 'sell', 'back', '-', 'remove'] },
-    sold: { primary: null, menu: ['edit', 'back', 'duplicate', '-', 'remove'] },
+    listed: { primary: 'order', menu: ['edit', 'spis', 'order', 'sell', 'reposted', 'message', 'unlist', 'duplicate', '-', 'remove'] },
+    toship: { primary: 'ship', menu: ['edit', 'ship', 'message', 'cancel', '-', 'remove'] },
+    shipped: { primary: 'sell', menu: ['edit', 'sell', 'message', 'back', '-', 'remove'] },
+    sold: { primary: null, menu: ['edit', 'message', 'back', 'duplicate', '-', 'remove'] },
   };
 
   const BULK_PRIMARY = { 'do-wyslania': 'ship', wyslane: 'sell' };
@@ -530,6 +633,7 @@
   function render() {
     renderNav();
     renderHeader();
+    renderInboxBanner();
     renderToolbar();
     renderListAndStats();
     renderBulkbar();
@@ -542,8 +646,11 @@
         const n = sum(items.filter((i) => i.status === 'stock'), (i) => i.qty);
         return { text: `${n} ${plural(n, 'niewystawiony', 'niewystawione', 'niewystawionych')}` };
       }
-      case 'wystawione':
+      case 'wystawione': {
+        const stale = items.filter(needsRefresh).length;
+        if (stale) return { text: `${stale} do odświeżenia` };
         return { text: items.length ? `wartość ${fmtMoney(sum(items, (i) => (i.listPrice || 0) * i.qty))}` : 'brak ofert' };
+      }
       case 'do-wyslania': {
         const late = items.filter(isOverdue).length;
         if (late) return { text: `${late} po terminie!`, late: true };
@@ -602,6 +709,8 @@
     const v = VIEW[ui.view];
     const f = F();
     const all = viewItems(v.id);
+    // Wyłączone odświeżanie = brak filtra „Do odświeżenia” (nie może zostać aktywny, gdy go nie widać)
+    if (v.id === 'wystawione' && !(data.settings.refreshDays > 0)) f.status = 'all';
 
     // Filtr statusu (Magazyn) albo okresu (Sprzedane)
     const statusBox = $('#statusChips');
@@ -612,6 +721,15 @@
         <button type="button" class="chip ${id !== 'all' ? `tone-${STATUS_TONE[id]}` : ''}" data-filter="status" data-value="${id}" aria-pressed="${f.status === id}">
           ${id !== 'all' ? '<span class="dot"></span>' : ''}${label}<span class="n">${n}</span>
         </button>`).join('');
+      statusBox.hidden = false;
+    } else if (v.id === 'wystawione' && data.settings.refreshDays > 0) {
+      const n = all.filter(needsRefresh).length;
+      if (f.status !== 'all' && f.status !== 'refresh') f.status = 'all';
+      statusBox.innerHTML = `
+        <button type="button" class="chip" data-filter="status" data-value="all" aria-pressed="${f.status === 'all'}">Wszystkie<span class="n">${all.length}</span></button>
+        <button type="button" class="chip" style="--tone:var(--warn)" data-filter="status" data-value="refresh" aria-pressed="${f.status === 'refresh'}" title="Wystawione co najmniej ${daysText(data.settings.refreshDays)} temu">
+          <span class="dot"></span>Do odświeżenia<span class="n">${n}</span>
+        </button>`;
       statusBox.hidden = false;
     } else if (v.id === 'sprzedane') {
       statusBox.innerHTML = PERIODS.map(([id, label]) => `
@@ -674,6 +792,7 @@
           { label: 'Wystawione sztuki', value: units },
           { label: 'Wartość ofert', value: fmtMoney(value(list, (i) => i.listPrice)) },
           { label: 'Średni czas wystawienia', value: avg == null ? '—' : daysText(avg) },
+          ...(data.settings.refreshDays > 0 ? [{ label: 'Do odświeżenia', value: list.filter(needsRefresh).length }] : []),
         ];
       }
       case 'do-wyslania': {
@@ -735,6 +854,9 @@
         add('Wystawiono', dateWithAgo(i.listedAt));
         add('Gdzie', i.platform);
         add('Spis', spisText);
+        add('Wyświetlenia', i.views);
+        add('Polubienia', i.favs);
+        if (i.repostCount) add('Odświeżano', `${i.repostCount}×`);
         add('Dodano', fmtDate(i.addedAt));
         break;
       case 'do-wyslania':
@@ -780,6 +902,12 @@
     if (i.location) flags.push(`<span class="loc">${icon('pin')}${esc(i.location)}</span>`);
     if (i.returnedAt && (i.status === 'stock' || i.status === 'listed')) {
       flags.push(`<span class="badge warn" title="Zwrot z dnia ${fmtDate(i.returnedAt)}">po zwrocie</span>`);
+    }
+    if (needsRefresh(i)) {
+      flags.push(`<span class="badge warn" title="Wystawione ${daysText(daysSince(i.listedAt))} temu">${icon('refresh')}do odświeżenia</span>`);
+    }
+    if (i.url) {
+      flags.push(`<a class="vlink" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer" title="Otwórz ogłoszenie">${icon('link')}${i.vintedId ? 'Vinted' : 'ogłoszenie'}</a>`);
     }
 
     const priceHTML = price
@@ -1074,6 +1202,12 @@
       required: o.required, placeholder: '0,00', pattern: MONEY_PATTERN, 'data-money': true, autocomplete: 'off',
     })}><span>zł</span></div>`, o);
   }
+  function urlField(name, label, value, o = {}) {
+    return field(name, label, `<input ${attrs({
+      type: 'url', inputmode: 'url', id: `f-${name}`, name, value: value || '', placeholder: o.placeholder || 'https://www.vinted.pl/items/…',
+      maxlength: 500, autocomplete: 'off',
+    })}>`, { full: true, ...o });
+  }
   function dateField(name, label, value, o = {}) {
     return field(name, label, `<input ${attrs({ type: 'date', id: `f-${name}`, name, value: value || '', required: o.required })}>`, o);
   }
@@ -1118,6 +1252,7 @@
     for (const el of form.elements) {
       if (!el.name || el.matches(':disabled')) continue;
       if (el.type === 'checkbox') out[el.name] = el.checked;
+      else if (el.type === 'radio') { if (el.checked) out[el.name] = el.value; }
       else out[el.name] = MONEY_FIELDS.has(el.name) ? parseMoney(el.value) : el.value.trim();
     }
     return out;
@@ -1140,6 +1275,8 @@
       listedAt: today(),
       categoryId: preset.categoryId !== undefined ? preset.categoryId : (catById(f.category) ? f.category : null),
       location: preset.location || '',
+      spis: [],
+      ...(preset.prefill || {}),
     };
     const reached = (s) => FLOW.indexOf(it.status) >= FLOW.indexOf(s);
     const listRequired = isNew || it.status === 'listed';
@@ -1152,6 +1289,7 @@
           ${moneyField('listPrice', 'Cena wystawienia (za szt.)', it.listPrice, { required: listRequired })}
           ${dateField('listedAt', 'Data wystawienia', it.listedAt, { required: listRequired })}
           ${textField('platform', 'Gdzie wystawione', it.platform, { list: 'dl-platforms', placeholder: 'np. OLX, Vinted, Allegro', full: true })}
+          ${urlField('url', 'Link do ogłoszenia', it.url)}
         </div>
       </fieldset>`;
 
@@ -1224,8 +1362,13 @@
           createdCategoryId = patch.categoryId;
           patch.qty = clampInt(v.qty, 1, 999999);
           if (showSpis) patch.spis = readSpis(form);
+          if ('url' in v) patch.vintedId = vintedIdFromUrl(v.url);
           if (isNew) {
-            data.items.push(normalizeItem({ ...patch, status: v.listNow ? 'listed' : 'stock' }));
+            const imp = takeImport(preset.importId);
+            data.items.push(normalizeItem({
+              ...patch, status: v.listNow ? 'listed' : 'stock',
+              ...(imp ? { views: imp.views, favs: imp.favs, statsAt: today() } : {}),
+            }));
           } else {
             const cur = getItem(item.id);
             if (cur) Object.assign(cur, patch, { updatedAt: nowISO() });
@@ -1326,7 +1469,11 @@
 
   /* ---------- Przenoszenie między zakładkami ---------- */
 
-  function openMoveDialog(items, target) {
+  /**
+   * opts.prefill — wartości wstępne pól (np. z zamówienia na Vinted),
+   * opts.importId — import z wtyczki, który zostanie zamknięty po zapisaniu.
+   */
+  function openMoveDialog(items, target, opts = {}) {
     items = items.filter(Boolean);
     if (!items.length) return;
     const single = items.length === 1 ? items[0] : null;
@@ -1365,6 +1512,7 @@
           }));
         }
         fields.push(textField('platform', 'Gdzie wystawione', single?.platform, { list: 'dl-platforms', placeholder: 'np. OLX, Vinted, Allegro', full: !!qtyAllowed }));
+        if (single) fields.push(urlField('url', 'Link do ogłoszenia', '', { hint: 'opcjonalnie' }));
         break;
       case 'toship':
         title = 'Zamówione — do wysłania';
@@ -1410,8 +1558,7 @@
       submitClass: 'primary',
       onMount(form) {
         const picker = form.elements.spisId;
-        if (!picker) return;
-        picker.addEventListener('change', () => {
+        if (picker) picker.addEventListener('change', () => {
           const entry = single.spis.find((e) => e.id === picker.value);
           if (!entry) return;
           form.elements.variant.value = entry.name;
@@ -1420,6 +1567,18 @@
             form.elements.salePrice.value = price == null ? '' : moneyInput(price);
           }
         });
+        // Najpierw pozycja ze spisu (uzupełnia nazwę i cenę), potem dane z Vinted — cena z zamówienia jest ważniejsza
+        const pre = opts.prefill || {};
+        if (picker && pre.spisId && single.spis.some((e) => e.id === pre.spisId)) {
+          picker.value = pre.spisId;
+          picker.dispatchEvent(new Event('change'));
+        }
+        for (const [key, val] of Object.entries(pre)) {
+          const el = form.elements[key];
+          if (!el || key === 'spisId' || val == null || val === '') continue;
+          if (key === 'variant' && pre.spisId && el.value) continue;
+          el.value = MONEY_FIELDS.has(key) ? moneyInput(val) : val;
+        }
       },
       onSubmit(form) {
         const v = readForm(form);
@@ -1433,7 +1592,10 @@
         commit(msg, () => {
           for (const it of items) {
             const cur = getItem(it.id);
-            if (cur) applyMove(cur, target, v, qty);
+            if (!cur) continue;
+            const rec = applyMove(cur, target, v, qty);
+            const imp = takeImport(opts.importId);
+            if (imp) applyImportToRecord(rec, imp);
           }
           if (!single) endSelection();
         });
@@ -1578,6 +1740,455 @@
     return form;
   }
 
+  /* ======================= Vinted: wtyczka, importy, szablony ======================= */
+
+  /** Stan połączenia z wtyczką „MyMagazine dla Vinted” (działa w tej samej przeglądarce). */
+  const ext = { connected: false, version: '' };
+  const postToExtension = (msg) => {
+    try {
+      window.postMessage({ source: 'mymagazine-app', ...msg }, /^https?:/.test(location.protocol) ? location.origin : '*');
+    } catch { /* brak wtyczki */ }
+  };
+  let syncTimer = 0;
+  function syncExtension() {
+    if (!ext.connected) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => postToExtension({ type: 'snapshot', snapshot: buildSnapshot() }), 250);
+  }
+
+  /** Skrót danych dla wtyczki: liczniki, zamówienia do wysłania, szablony i ogłoszenia powiązane z Vinted. */
+  function buildSnapshot() {
+    const linked = {};
+    for (const i of data.items) {
+      const base = {
+        name: displayName(i), status: i.status, statusLabel: STATUS[i.status], location: i.location, listedAt: i.listedAt,
+        price: i.salePrice ?? i.listPrice, buyer: i.buyer, carrier: i.carrier, tracking: i.tracking,
+      };
+      if (i.vintedId && (!linked[i.vintedId] || i.status !== 'sold')) linked[i.vintedId] = base;
+      for (const e of i.spis) {
+        if (e.vintedId) linked[e.vintedId] = { ...base, name: `${i.name} - ${e.name}`, price: e.price ?? i.listPrice, inSpis: true };
+      }
+    }
+    const units = (st) => sum(data.items.filter((i) => i.status === st), (i) => i.qty);
+    return {
+      updatedAt: nowISO(),
+      appUrl: location.origin + location.pathname,
+      counts: {
+        stock: units('stock'), listed: units('listed'), toship: units('toship'), shipped: units('shipped'), sold: units('sold'),
+        refresh: data.items.filter(needsRefresh).length, imports: data.imports.length,
+      },
+      toship: sortItems(viewItems('do-wyslania'), 'deadline', VIEW['do-wyslania']).slice(0, 30).map((i) => ({
+        name: displayName(i), qty: i.qty, buyer: i.buyer, shipBy: i.shipBy, location: i.location, late: isOverdue(i),
+      })),
+      refreshDays: data.settings.refreshDays,
+      discount: data.settings.discount,
+      templates: data.templates,
+      linked,
+    };
+  }
+
+  /** Wyjmuje import z kolejki (wywoływane wewnątrz commit, więc „Cofnij” go przywraca). */
+  function takeImport(id) {
+    if (!id) return null;
+    const imp = data.imports.find((x) => x.id === id);
+    if (imp) data.imports = data.imports.filter((x) => x !== imp);
+    return imp || null;
+  }
+
+  function applyImportToRecord(rec, imp) {
+    if (imp.url) rec.url = imp.url;
+    if (imp.vintedId) rec.vintedId = imp.vintedId;
+    if (imp.type === 'listing') {
+      if (imp.views != null) rec.views = imp.views;
+      if (imp.favs != null) rec.favs = imp.favs;
+      rec.statsAt = today();
+    }
+    rec.updatedAt = nowISO();
+  }
+
+  /** Szuka ogłoszenia Vinted w danych: w przedmiotach albo w pozycjach spisów partii. */
+  function findVinted(vid) {
+    if (!vid) return null;
+    const item = data.items.find((i) => i.vintedId === vid && i.status !== 'sold');
+    if (item) return { item };
+    for (const i of data.items) {
+      const entry = i.spis.find((e) => e.vintedId === vid);
+      if (entry) return { item: i, entry };
+    }
+    return null;
+  }
+
+  const words = (t) => norm(t).split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+  function matchScore(a, b) {
+    const A = new Set(words(a));
+    const B = words(b);
+    if (!A.size || !B.length) return 0;
+    return B.filter((w) => A.has(w)).length / Math.max(A.size, B.length);
+  }
+  function bestMatch(items, title) {
+    let best = null;
+    let score = 0;
+    for (const i of items) {
+      const sc = Math.max(matchScore(i.name, title), matchScore(displayName(i), title), ...i.spis.map((e) => matchScore(e.name, title)));
+      if (sc > score) { best = i; score = sc; }
+    }
+    return score >= 0.34 ? best : null;
+  }
+
+  /** Aktualizacje, które nie wymagają decyzji: statystyki znanego ogłoszenia albo odświeżone (ponownie wystawione) ogłoszenie. */
+  function autoApplyImport(imp) {
+    if (imp.type !== 'listing') return null;
+    const hit = findVinted(imp.vintedId);
+    if (hit && hit.entry) {
+      if (imp.price != null) hit.entry.price = imp.price;
+      if (imp.url) hit.entry.url = imp.url;
+      return `Zaktualizowano pozycję spisu „${hit.entry.name}”`;
+    }
+    if (hit) {
+      applyImportToRecord(hit.item, imp);
+      if (imp.price != null && hit.item.status === 'listed') hit.item.listPrice = imp.price;
+      return `Zaktualizowano z Vinted: „${displayName(hit.item)}”`;
+    }
+    const old = findVinted(imp.replaces);
+    if (old && old.entry) {
+      Object.assign(old.entry, { vintedId: imp.vintedId, url: imp.url || old.entry.url });
+      if (imp.price != null) old.entry.price = imp.price;
+      return `Odświeżono ogłoszenie „${old.entry.name}”`;
+    }
+    if (old) {
+      applyImportToRecord(old.item, imp);
+      if (imp.price != null && old.item.status === 'listed') old.item.listPrice = imp.price;
+      old.item.listedAt = today();
+      old.item.repostCount += 1;
+      return `Odświeżono ogłoszenie „${displayName(old.item)}”`;
+    }
+    return null;
+  }
+
+  function receiveImports(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    const known = new Set(data.imports.map((x) => x.id));
+    const done = [];
+    let queued = 0;
+    for (const raw of list) {
+      const imp = normalizeImport(raw);
+      if (!imp || known.has(imp.id)) continue;
+      const msg = autoApplyImport(imp);
+      if (msg) done.push(msg);
+      else if (!raw.silent) {
+        data.imports.push(imp);
+        queued += 1;
+      }
+    }
+    postToExtension({ type: 'ack', ids: list.map((x) => x && x.id).filter(Boolean) });
+    if (!done.length && !queued) return;
+    persist();
+    render();
+    if (queued) toast(`Z Vinted: ${queued} ${posWord(queued)} do przejrzenia`, { action: 'Przejrzyj', onAction: openInbox });
+    else toast(done.length === 1 ? done[0] : `Zaktualizowano z Vinted: ${done.length} ${posWord(done.length)}`);
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data || e.data.source !== 'mymagazine-ext') return;
+    if (e.data.type === 'hello') {
+      ext.connected = true;
+      ext.version = str(e.data.version);
+      syncExtension();
+    } else if (e.data.type === 'imports') {
+      receiveImports(e.data.imports);
+    }
+  });
+
+  function renderInboxBanner() {
+    const el = $('#inboxBanner');
+    const n = data.imports.length;
+    el.hidden = !n;
+    if (!n) {
+      el.innerHTML = '';
+      return;
+    }
+    const orders = data.imports.filter((x) => x.type === 'order').length;
+    el.innerHTML = `${icon('inbox')}<p>Z Vinted: ${n} ${posWord(n)} do przejrzenia${orders ? ` (w tym ${orders} ${plural(orders, 'zamówienie', 'zamówienia', 'zamówień')})` : ''}</p>
+      <button type="button" class="btn small primary" data-act="inbox">Przejrzyj</button>`;
+  }
+
+  function importHTML(x) {
+    const meta = [
+      x.price != null ? fmtMoney(x.price) : '',
+      x.type === 'order' && x.buyer ? `kupujący: ${x.buyer}` : '',
+      x.brand, x.size ? `rozm. ${x.size}` : '', x.condition,
+      x.views != null ? `${x.views} wyświetleń` : '', x.favs != null ? `${x.favs} polubień` : '',
+    ].filter(Boolean).map(esc).join(' · ');
+    const thumb = x.photo
+      ? `<img class="imp-thumb" src="${esc(x.photo)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : `<div class="imp-thumb">${icon(x.type === 'order' ? 'clipboard' : 'tag')}</div>`;
+    const actions = x.type === 'order'
+      ? `<button type="button" class="btn small primary" data-imp="order">${icon('clipboard')}Przypisz do przedmiotu</button>`
+      : `<button type="button" class="btn small primary" data-imp="new">${icon('plus')}Dodaj jako nowy</button>
+         <button type="button" class="btn small" data-imp="assign">${icon('link')}Przypisz do istniejącego</button>`;
+    return `
+      <li class="imp" data-id="${esc(x.id)}">
+        ${thumb}
+        <div>
+          <span class="imp-type ${x.type}">${x.type === 'order' ? 'Zamówienie' : 'Ogłoszenie'}</span>
+          <h4>${esc(x.title)}</h4>
+          <p class="imp-meta">${meta}${x.url ? `${meta ? ' · ' : ''}<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">otwórz na Vinted</a>` : ''}</p>
+          <div class="imp-actions">${actions}<button type="button" class="btn small ghost" data-imp="dismiss">Odrzuć</button></div>
+        </div>
+      </li>`;
+  }
+
+  function openInbox() {
+    if (!data.imports.length) {
+      if ($('#dialog').open) $('#dialog').close();
+      return;
+    }
+    openDialog({
+      title: 'Import z Vinted',
+      cancelText: 'Zamknij',
+      body: `
+        <p class="small muted" style="margin:0 0 12px">Ogłoszenia i zamówienia wysłane z wtyczki „MyMagazine dla Vinted”. Zdecyduj, co z nimi zrobić.</p>
+        <ul class="imp-list">${data.imports.map(importHTML).join('')}</ul>`,
+      onMount(form) {
+        form.addEventListener('click', (e) => {
+          const b = e.target.closest('[data-imp]');
+          if (!b) return;
+          const imp = data.imports.find((x) => x.id === b.closest('[data-id]').dataset.id);
+          if (imp) handleImport(b.dataset.imp, imp);
+        });
+      },
+    });
+  }
+
+  function handleImport(action, imp) {
+    if (action === 'dismiss') {
+      commit('Odrzucono import z Vinted', () => takeImport(imp.id));
+      openInbox();
+    } else if (action === 'new') {
+      const notes = [imp.brand && `Marka: ${imp.brand}`, imp.size && `Rozmiar: ${imp.size}`, imp.condition && `Stan: ${imp.condition}`].filter(Boolean).join(', ');
+      openItemForm(null, {
+        listNow: true,
+        importId: imp.id,
+        prefill: { name: imp.title, listPrice: imp.price, platform: 'Vinted', url: imp.url, notes },
+      });
+    } else if (action === 'assign') {
+      openAssignListing(imp);
+    } else if (action === 'order') {
+      openAssignOrder(imp);
+    }
+  }
+
+  function itemOptions(groups, selected) {
+    return groups.filter(([, list]) => list.length).map(([label, list]) => `
+      <optgroup label="${esc(label)}">
+        ${list.map((i) => `<option value="${esc(i.id)}" ${i === selected ? 'selected' : ''}>${esc(displayName(i))} · ${i.qty} szt.${i.location ? ` · ${esc(i.location)}` : ''}</option>`).join('')}
+      </optgroup>`).join('');
+  }
+
+  function openAssignListing(imp) {
+    const listed = data.items.filter((i) => i.status === 'listed');
+    const stock = data.items.filter((i) => i.status === 'stock');
+    if (!listed.length && !stock.length) {
+      toast('Nie masz przedmiotów na stanie ani wystawionych — dodaj ogłoszenie jako nowy przedmiot.');
+      return;
+    }
+    const best = bestMatch(listed, imp.title) || bestMatch(stock, imp.title) || listed[0] || stock[0];
+    const priceText = imp.price != null ? ` za ${fmtMoney(imp.price)}` : '';
+    openDialog({
+      title: 'Przypisz ogłoszenie z Vinted',
+      submitText: 'Zatwierdź',
+      body: `
+        <p class="dlg-lead">${esc(imp.title)}${imp.price != null ? ` <span class="muted">· ${esc(fmtMoney(imp.price))}</span>` : ''}</p>
+        <div class="form-grid">
+          ${field('target', 'Przedmiot w MyMagazine', `<select id="f-target" name="target">${itemOptions([['Wystawione', listed], ['Na stanie', stock]], best)}</select>`, { full: true })}
+        </div>
+        <div class="radio-list" id="assignModes"></div>`,
+      onMount(form) {
+        const paint = () => {
+          const item = getItem(form.elements.target.value);
+          if (!item) return;
+          const modes = item.status === 'stock'
+            ? [['list', 'Wystaw z magazynu', 'otworzy okno „Wystaw” z ceną i linkiem z Vinted', true]]
+            : [
+              ['spis', 'Dodaj do spisu partii', `jako „${imp.title}”${priceText} — przy zamówieniu wybierzesz go z listy`, item.qty > 1],
+              ['link', 'To jest ogłoszenie tego przedmiotu', 'zapisze link i statystyki; nowy link w miejsce starego = ogłoszenie odświeżone', item.qty === 1],
+            ];
+          $('#assignModes', form).innerHTML = modes.map(([id, label, hint, on]) => `
+            <label><input type="radio" name="mode" value="${id}" ${on ? 'checked' : ''}><span>${esc(label)}<small>${esc(hint)}</small></span></label>`).join('');
+        };
+        form.elements.target.addEventListener('change', paint);
+        paint();
+      },
+      onSubmit(form) {
+        const v = readForm(form);
+        const item = getItem(v.target);
+        if (!item) return false;
+        if (v.mode === 'list') {
+          openMoveDialog([item], 'listed', { importId: imp.id, prefill: { qty: 1, listPrice: imp.price, platform: 'Vinted', url: imp.url } });
+          return false;
+        }
+        if (v.mode === 'spis') {
+          commit(`Dodano do spisu partii „${displayName(item)}”`, () => {
+            const cur = getItem(item.id);
+            cur.spis.push(normalizeSpisEntry({ name: imp.title, price: imp.price, url: imp.url, vintedId: imp.vintedId }));
+            takeImport(imp.id);
+          });
+        } else {
+          commit(`Połączono z ogłoszeniem: „${displayName(item)}”`, () => {
+            const cur = getItem(item.id);
+            const reposted = !!(cur.vintedId && imp.vintedId && cur.vintedId !== imp.vintedId);
+            applyImportToRecord(cur, takeImport(imp.id));
+            if (imp.price != null) cur.listPrice = imp.price;
+            if (reposted) {
+              cur.listedAt = today();
+              cur.repostCount += 1;
+            }
+          });
+        }
+        setTimeout(openInbox, 0);
+        return true;
+      },
+    });
+  }
+
+  function openAssignOrder(imp) {
+    const candidates = data.items.filter((i) => i.status === 'listed' || i.status === 'stock');
+    if (!candidates.length) {
+      toast('Nie masz przedmiotów na stanie ani wystawionych, do których można przypisać zamówienie.');
+      return;
+    }
+    const hit = findVinted(imp.vintedId);
+    const best = (hit && candidates.includes(hit.item) && hit.item)
+      || bestMatch(candidates.filter((i) => i.status === 'listed'), imp.title)
+      || bestMatch(candidates, imp.title) || candidates[0];
+    openDialog({
+      title: 'Zamówienie z Vinted',
+      submitText: 'Dalej',
+      body: `
+        <p class="dlg-lead">${esc(imp.title)}${imp.price != null ? ` <span class="muted">· ${esc(fmtMoney(imp.price))}</span>` : ''}${imp.buyer ? ` <span class="muted">· ${esc(imp.buyer)}</span>` : ''}</p>
+        <div class="form-grid">
+          ${field('target', 'Który przedmiot został sprzedany?', `<select id="f-target" name="target">${itemOptions([
+            ['Wystawione', candidates.filter((i) => i.status === 'listed')],
+            ['Na stanie', candidates.filter((i) => i.status === 'stock')],
+          ], best)}</select>`, { full: true, hint: 'w następnym kroku sprawdzisz nazwę, cenę i kupującego' })}
+        </div>`,
+      onSubmit(form) {
+        const item = getItem(readForm(form).target);
+        if (!item) return false;
+        const sameListing = !!(item.vintedId && item.vintedId === imp.vintedId);
+        const entry = item.spis.find((e) => e.vintedId && e.vintedId === imp.vintedId)
+          || item.spis.find((e) => matchScore(e.name, imp.title) >= 0.6);
+        const variant = sameListing ? '' : (entry ? entry.name : (norm(imp.title) === norm(item.name) ? '' : imp.title));
+        openMoveDialog([item], 'toship', {
+          importId: imp.id,
+          prefill: { spisId: entry ? entry.id : '', variant, salePrice: imp.price, buyer: imp.buyer },
+        });
+        return false;
+      },
+    });
+  }
+
+  /* ---------- Szablony wiadomości ---------- */
+
+  const PLACEHOLDERS = ['{nazwa}', '{cena}', '{cena_rabat}', '{rabat}', '{kupujacy}', '{przewoznik}', '{numer}', '{link}'];
+  const DEFAULT_TEMPLATE_FOR = { listed: 'tpl-offer', toship: 'tpl-thanks', shipped: 'tpl-shipped', sold: 'tpl-confirm' };
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      ta.remove();
+      return ok;
+    }
+  }
+
+  function openMessageDialog(item) {
+    if (!data.templates.length) {
+      toast('Nie masz szablonów wiadomości — dodaj je w Ustawieniach.');
+      return;
+    }
+    const pref = data.templates.find((t) => t.id === DEFAULT_TEMPLATE_FOR[item.status]) || data.templates[0];
+    openDialog({
+      title: 'Wiadomość z szablonu',
+      submitText: 'Kopiuj',
+      body: `
+        <p class="dlg-lead">${esc(displayName(item))}</p>
+        <div class="form-grid">
+          ${field('tpl', 'Szablon', `<select id="f-tpl" name="tpl">${data.templates.map((t) => `<option value="${esc(t.id)}" ${t === pref ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`, { full: true })}
+          ${field('msg', 'Treść (możesz ją poprawić)', `<textarea id="f-msg" class="msg-text" rows="5">${esc(fillTemplate(pref.text, item))}</textarea>`, { full: true, hint: 'skopiuj i wklej w rozmowie na Vinted — albo użyj szablonów bezpośrednio we wtyczce' })}
+        </div>`,
+      extraButtons: item.url ? `<a class="btn" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}Ogłoszenie</a>` : '',
+      onMount(form) {
+        form.elements.tpl.addEventListener('change', () => {
+          const t = data.templates.find((x) => x.id === form.elements.tpl.value);
+          if (t) $('#f-msg', form).value = fillTemplate(t.text, item);
+        });
+      },
+      onSubmit(form) {
+        copyText($('#f-msg', form).value).then((ok) => toast(ok ? 'Skopiowano wiadomość — wklej ją na Vinted' : 'Nie udało się skopiować — zaznacz tekst ręcznie', { type: ok ? '' : 'error' }));
+      },
+    });
+  }
+
+  function openTemplates() {
+    const row = (t = {}) => `
+      <div class="tpl" data-id="${esc(t.id || uid())}">
+        <div class="tpl-head">
+          <input type="text" class="tpl-name" value="${esc(t.name || '')}" placeholder="Nazwa szablonu" maxlength="60" aria-label="Nazwa szablonu">
+          <button type="button" class="icon-btn" data-tpl="remove" aria-label="Usuń szablon" title="Usuń">${icon('trash')}</button>
+        </div>
+        <textarea class="tpl-text" rows="3" maxlength="1000" placeholder="Treść wiadomości…" aria-label="Treść szablonu">${esc(t.text || '')}</textarea>
+      </div>`;
+    openDialog({
+      title: 'Szablony wiadomości',
+      body: `
+        <p class="small muted" style="margin:0 0 8px">Wstawki, które uzupełnią się same:</p>
+        <div class="placeholders">${PLACEHOLDERS.map((x) => `<code>${x}</code>`).join('')}</div>
+        <div class="form-grid" style="margin-bottom:14px">
+          ${field('discount', 'Rabat dla {cena_rabat} (%)', `<input type="number" id="f-discount" name="discount" min="0" max="90" step="1" value="${data.settings.discount}" inputmode="numeric">`)}
+        </div>
+        <div class="tpl-list">${data.templates.map(row).join('')}</div>
+        <p style="margin:12px 0 0;display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn small" data-tpl="add">${icon('plus')}Dodaj szablon</button>
+          <button type="button" class="btn small ghost" data-tpl="reset">Przywróć domyślne</button>
+        </p>`,
+      onMount(form) {
+        const list = $('.tpl-list', form);
+        form.addEventListener('click', (e) => {
+          const b = e.target.closest('[data-tpl]');
+          if (!b) return;
+          if (b.dataset.tpl === 'add') {
+            list.insertAdjacentHTML('beforeend', row());
+            $('.tpl:last-child .tpl-name', list).focus();
+          } else if (b.dataset.tpl === 'remove') {
+            b.closest('.tpl').remove();
+          } else if (b.dataset.tpl === 'reset') {
+            list.innerHTML = DEFAULT_TEMPLATES.map(row).join('');
+          }
+        });
+      },
+      onSubmit(form) {
+        const templates = $$('.tpl', form)
+          .map((el) => ({ id: el.dataset.id, name: $('.tpl-name', el).value.trim() || 'Szablon', text: $('.tpl-text', el).value.trim() }))
+          .filter((t) => t.text);
+        const discount = clampInt(form.elements.discount.value, 0, 90);
+        commit('Zapisano szablony wiadomości', () => {
+          data.templates = templates;
+          data.settings.discount = discount;
+        });
+      },
+    });
+  }
+
   /* ---------- Ustawienia, kopia zapasowa, eksport ---------- */
 
   let installPrompt = null;
@@ -1628,6 +2239,30 @@
           <div class="set-actions"><button type="button" class="btn" data-set="categories">${icon('folder')}Zarządzaj kategoriami</button></div>
         </section>
         <section class="set-section">
+          <h3>Wtyczka Vinted</h3>
+          <p><span class="ext-status ${ext.connected ? 'on' : ''}">${ext.connected ? `Połączona${ext.version ? ` (wersja ${esc(ext.version)})` : ''}` : 'Nie wykryto wtyczki w tej przeglądarce'}</span></p>
+          <p>„MyMagazine dla Vinted” dodaje na Vinted panel: przenoszenie ogłoszeń i zamówień do MyMagazine, szablony wiadomości w czacie, pomoc przy odświeżaniu ogłoszeń i ich statystyki.</p>
+          ${ext.connected ? '' : `<ol class="steps">
+            <li>Pobierz plik wtyczki i rozpakuj go.</li>
+            <li>Otwórz <b>edge://extensions</b> (Edge) lub <b>chrome://extensions</b> (Chrome) i włącz „Tryb dewelopera”.</li>
+            <li>Kliknij „Załaduj rozpakowane” i wskaż rozpakowany folder <b>mymagazine-vinted</b>.</li>
+            <li>Odśwież tę stronę.</li>
+          </ol>`}
+          <div class="set-actions"><a class="btn" href="mymagazine-vinted.zip" download>${icon('download')}Pobierz wtyczkę</a></div>
+        </section>
+        <section class="set-section">
+          <h3>Odświeżanie ogłoszeń</h3>
+          <p>Ogłoszenia wystawione dłużej niż podana liczba dni dostaną znacznik „do odświeżenia” (0 = wyłączone).</p>
+          <div class="set-actions" style="align-items:center">
+            <input type="number" class="num-input" id="setRefresh" min="0" max="365" step="1" inputmode="numeric" value="${data.settings.refreshDays}" aria-label="Liczba dni"> <span>dni</span>
+          </div>
+        </section>
+        <section class="set-section">
+          <h3>Szablony wiadomości</h3>
+          <p>Masz ${data.templates.length} ${plural(data.templates.length, 'szablon', 'szablony', 'szablonów')}. Używasz ich z menu ⋮ przedmiotu („Wiadomość z szablonu”) albo w czacie na Vinted przez wtyczkę.</p>
+          <div class="set-actions"><button type="button" class="btn" data-set="templates">${icon('message')}Edytuj szablony</button></div>
+        </section>
+        <section class="set-section">
           <h3>Wygląd</h3>
           <div class="segmented" role="group" aria-label="Motyw">
             ${[['auto', 'Automatyczny'], ['light', 'Jasny'], ['dark', 'Ciemny']].map(([id, label]) => `<button type="button" data-theme-set="${id}" aria-pressed="${prefs.theme === id}">${label}</button>`).join('')}
@@ -1644,6 +2279,12 @@
         </section>
         ${storageOk ? '' : '<p class="small" style="color:var(--danger)">Uwaga: przeglądarka nie pozwala zapisywać danych (np. tryb prywatny). Zmiany znikną po zamknięciu karty.</p>'}`,
       onMount(form) {
+        $('#setRefresh', form).addEventListener('change', (e) => {
+          data.settings.refreshDays = clampInt(e.target.value, 0, 365);
+          e.target.value = data.settings.refreshDays;
+          persist();
+          render();
+        });
         $('#importFile', form).addEventListener('change', (e) => {
           const file = e.target.files && e.target.files[0];
           e.target.value = '';
@@ -1665,6 +2306,7 @@
             case 'import': $('#importFile', form).click(); break;
             case 'csv': exportCSV(); break;
             case 'categories': openCategories(); break;
+            case 'templates': openTemplates(); break;
             case 'install':
               if (installPrompt) {
                 installPrompt.prompt();
@@ -1748,6 +2390,7 @@
       ['Nr przesyłki', (i) => i.tracking],
       ['Data sprzedaży', (i) => i.soldAt],
       ['Data zwrotu', (i) => i.returnedAt],
+      ['Link do ogłoszenia', (i) => i.url],
       ['Notatki', (i) => i.notes],
       ['Spis partii', (i) => i.spis.map((e) => (e.price != null ? `${e.name} (${n(e.price)} zł)` : e.name)).join(', ')],
     ];
@@ -1828,12 +2471,17 @@
       if (b.dataset.open === 'categories') openCategories();
     });
 
+    $('#inboxBanner').addEventListener('click', (e) => {
+      if (e.target.closest('[data-act="inbox"]')) openInbox();
+    });
+
     $('#resultInfo').addEventListener('click', (e) => {
       if (e.target.closest('[data-act="clear-filters"]')) clearFilters();
     });
 
     const list = $('#list');
     list.addEventListener('click', (e) => {
+      if (e.target.closest('a[href]')) return;
       const el = e.target.closest('[data-act]');
       if (!el) return;
       const act = el.dataset.act;
@@ -1930,6 +2578,7 @@
 
   applyTheme();
   bindEvents();
+  postToExtension({ type: 'ping' });
   setView(location.hash.slice(1) || 'magazyn');
 
   if (!storageOk) {

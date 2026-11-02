@@ -34,6 +34,30 @@ Każdy przycisk przenosi przedmiot do następnej zakładki. W menu **⋮** są d
 - **Zaznaczanie wielu**: np. wszystkie paczki z „Do wysłania” oznaczysz jako wysłane jednym ruchem.
 - **„Cofnij”** po każdej zmianie, na wypadek pomyłki.
 - **Kopia zapasowa** (plik JSON: pobierz i wczytaj) oraz **eksport do Excela** (CSV).
+- **Odświeżanie ogłoszeń**: ogłoszenia wystawione dłużej niż ustawiona liczba dni (domyślnie 14) dostają znacznik „do odświeżenia” i mają własny filtr w Wystawionych. Po wystawieniu ponownie wybierz ⋮ → „Oznacz jako odświeżone”.
+- **Szablony wiadomości**: gotowe teksty (podziękowanie, paczka wysłana, oferta dla obserwujących…) z wstawkami `{nazwa}`, `{cena}`, `{cena_rabat}`, `{kupujacy}`, `{przewoznik}`, `{numer}`. Z menu ⋮ → „Wiadomość z szablonu” kopiujesz gotowy tekst. Szablony i rabat edytujesz w Ustawieniach.
+- **Link i statystyki ogłoszenia**: przedmiot może mieć link do ogłoszenia oraz liczbę wyświetleń i polubień (uzupełnia je wtyczka).
+
+## Wtyczka „MyMagazine dla Vinted”
+
+Wtyczka do Edge i Chrome (folder `extension/`, gotowa paczka: `mymagazine-vinted.zip`) łączy Vinted z aplikacją. Na stronach Vinted pokazuje panel **MyMagazine** w prawym dolnym rogu:
+
+| Gdzie | Co robi |
+|---|---|
+| **Strona ogłoszenia** | Czyta tytuł, cenę, zdjęcia, markę, rozmiar, wyświetlenia i polubienia. „Dodaj do MyMagazine” wysyła ogłoszenie do aplikacji: jako nowy przedmiot, **pozycję spisu partii** albo połączenie z istniejącym. Jeśli ogłoszenie już jest w MyMagazine, panel to pokazuje, a statystyki aktualizują się same. |
+| **Odśwież ogłoszenie** | Zapisuje szkic ogłoszenia razem ze zdjęciami. W formularzu „Sprzedaj” przycisk „Wypełnij formularz” uzupełnia tytuł, opis, cenę i zdjęcia (kategorię, markę, rozmiar i stan wybierasz sam). Gdy nowe ogłoszenie się pojawi, MyMagazine podmieni link i zapisze nową datę wystawienia. |
+| **Rozmowa (czat)** | Szablony wiadomości wstawiane jednym kliknięciem, z nazwą, ceną, kupującym i numerem przesyłki z MyMagazine. „Dodaj zamówienie do MyMagazine” przenosi sprzedaż do „Do wysłania”: aplikacja dopasuje przedmiot (także pozycję ze spisu partii) i uzupełni nazwę, cenę i kupującego. |
+| **Ikona wtyczki** | Licznik paczek do wysłania i podsumowanie: do wysłania, wystawione, na stanie, do odświeżenia. |
+
+Wtyczka **niczego nie wysyła na Vinted sama**: każdą wiadomość i każde ogłoszenie zatwierdzasz ręcznie. To celowe. Regulamin Vinted nie dopuszcza automatów (np. samoczynnego odświeżania ogłoszeń czy masowych wiadomości), a takie działanie grozi blokadą konta.
+
+**Instalacja:**
+1. W MyMagazine otwórz *Ustawienia → Wtyczka Vinted → Pobierz wtyczkę* i rozpakuj plik.
+2. Otwórz `edge://extensions` (Edge) lub `chrome://extensions` (Chrome) i włącz **Tryb dewelopera**.
+3. Kliknij **Załaduj rozpakowane** i wskaż folder `mymagazine-vinted`.
+4. Odśwież stronę MyMagazine. W Ustawieniach pojawi się „Połączona”.
+
+Wtyczka przekazuje dane do aplikacji, gdy MyMagazine jest otwarty w tej samej przeglądarce. Do tego czasu czekają one w kolejce. Działa z adresem `https://blazej21r.github.io/Magazyn/`. Po zmianie adresu popraw `matches` w `extension/manifest.json`. Po zmianach w folderze `extension/` zbuduj paczkę od nowa: `python3 scripts/build-extension.py`.
 - Jasny i ciemny motyw, obsługa klawiatury (`N` to nowy przedmiot, `/` to wyszukiwanie).
 
 ## Uruchomienie
@@ -74,4 +98,7 @@ app.js                 – cała logika aplikacji
 sw.js                  – service worker (działanie offline)
 manifest.webmanifest   – dane do instalacji jako aplikacja
 icons/                 – ikony aplikacji
+extension/             – wtyczka „MyMagazine dla Vinted” (Edge/Chrome)
+mymagazine-vinted.zip  – gotowa paczka wtyczki do pobrania
+scripts/               – skrypt budujący paczkę wtyczki
 ```
