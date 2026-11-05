@@ -33,7 +33,8 @@ Każdy przycisk przenosi przedmiot do następnej zakładki. W menu **⋮** są d
 - **Statystyki** w każdej zakładce: liczba sztuk, wartość ofert, zamówienia po terminie, przychód i zysk.
 - **Zaznaczanie wielu**: np. wszystkie paczki z „Do wysłania” oznaczysz jako wysłane jednym ruchem.
 - **„Cofnij”** po każdej zmianie, na wypadek pomyłki.
-- **Kopia zapasowa** (plik JSON: pobierz i wczytaj) oraz **eksport do Excela** (CSV).
+- **Ewidencja sprzedaży do Excela**: w zakładce Sprzedane wybierasz miesiąc (filtr „Wybierz miesiąc…”), a przycisk **„Pobierz do Excela”** zapisuje plik `.xlsx` za wybrany miesiąc, rok albo cały okres, opcjonalnie dla jednej kategorii. W pliku: data sprzedaży, przedmiot, ilość, cena, przychód, koszt, zysk, kupujący i dane wysyłki, a na końcu wiersz sum.
+- **Kopia zapasowa** (plik JSON: pobierz i wczytaj) oraz eksport całego magazynu do CSV (Ustawienia).
 - **Odświeżanie ogłoszeń**: ogłoszenia wystawione dłużej niż ustawiona liczba dni (domyślnie 14) dostają znacznik „do odświeżenia” i mają własny filtr w Wystawionych. Po wystawieniu ponownie wybierz ⋮ → „Oznacz jako odświeżone”.
 - **Szablony wiadomości**: gotowe teksty (podziękowanie, paczka wysłana, oferta dla obserwujących…) z wstawkami `{nazwa}`, `{cena}`, `{cena_rabat}`, `{kupujacy}`, `{przewoznik}`, `{numer}`. Z menu ⋮ → „Wiadomość z szablonu” kopiujesz gotowy tekst. Szablony i rabat edytujesz w Ustawieniach.
 - **Link i statystyki ogłoszenia**: przedmiot może mieć link do ogłoszenia oraz liczbę wyświetleń i polubień (uzupełnia je wtyczka).

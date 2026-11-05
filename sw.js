@@ -1,6 +1,6 @@
 /* MyMagazine — service worker: aplikacja działa także bez internetu.
    Strategia „najpierw sieć”: online zawsze dostajesz najnowszą wersję, offline — tę z pamięci podręcznej. */
-const CACHE = 'mymagazine-v3';
+const CACHE = 'mymagazine-v4';
 const ASSETS = [
   './',
   './index.html',

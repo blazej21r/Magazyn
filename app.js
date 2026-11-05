@@ -487,8 +487,18 @@
       .join(' ');
   }
 
+  const monthFmt = new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' });
+  /** „2026-10” → „październik 2026” */
+  const monthLabel = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    return monthFmt.format(new Date(y, m - 1, 1));
+  };
+  /** Miesiące, w których coś sprzedano (od najnowszego), np. ["2026-11", "2026-10"]. */
+  const soldMonths = () => [...new Set(data.items.filter((i) => i.status === 'sold' && parseDate(i.soldAt)).map((i) => i.soldAt.slice(0, 7)))].sort().reverse();
+
   function inPeriod(s, period) {
     if (period === 'all') return true;
+    if (period.startsWith('m:')) return str(s).slice(0, 7) === period.slice(2);
     const d = parseDate(s);
     if (!d) return false;
     const t = new Date();
@@ -701,6 +711,7 @@
     $('#viewTitle').textContent = v.heading || v.title;
     $('#viewDesc').textContent = v.desc;
     $('#btnAdd').hidden = !canAdd();
+    $('#btnExport').hidden = v.id !== 'sprzedane';
     $('#fab').hidden = !canAdd() || ui.selecting;
     document.title = `${v.title} · MyMagazine`;
   }
@@ -732,8 +743,18 @@
         </button>`;
       statusBox.hidden = false;
     } else if (v.id === 'sprzedane') {
+      const months = soldMonths();
+      if (f.period.startsWith('m:') && !months.includes(f.period.slice(2))) f.period = 'all';
+      const monthOn = f.period.startsWith('m:');
       statusBox.innerHTML = PERIODS.map(([id, label]) => `
-        <button type="button" class="chip" data-filter="period" data-value="${id}" aria-pressed="${f.period === id}">${label}</button>`).join('');
+        <button type="button" class="chip" data-filter="period" data-value="${id}" aria-pressed="${f.period === id}">${label}</button>`).join('')
+        + (months.length ? `
+        <label class="chip chip-select ${monthOn ? 'on' : ''}" title="Pokaż sprzedaż z wybranego miesiąca">
+          <select data-filter-select="period" aria-label="Wybierz miesiąc">
+            <option value="" ${monthOn ? '' : 'selected'}>Wybierz miesiąc…</option>
+            ${months.map((m) => `<option value="m:${m}" ${f.period === `m:${m}` ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
+          </select>
+        </label>` : '');
       statusBox.hidden = false;
     } else {
       statusBox.innerHTML = '';
@@ -2409,6 +2430,248 @@
     toast('Wyeksportowano plik CSV');
   }
 
+  /* ---------- Eksport do Excela (.xlsx) ---------- */
+
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  const crc32 = (bytes) => {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i += 1) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+
+  /** Prosty ZIP bez kompresji — plik .xlsx to archiwum ZIP z plikami XML. */
+  function zipFiles(files) {
+    const enc = new TextEncoder();
+    const now = new Date();
+    const time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+    const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    for (const f of files) {
+      const name = enc.encode(f.name);
+      const body = enc.encode(f.text);
+      const crc = crc32(body);
+      const head = new DataView(new ArrayBuffer(30));
+      [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, time, 2], [12, date, 2], [14, crc, 4], [18, body.length, 4], [22, body.length, 4], [26, name.length, 2], [28, 0, 2]]
+        .forEach(([at, v, size]) => (size === 4 ? head.setUint32(at, v, true) : head.setUint16(at, v, true)));
+      parts.push(new Uint8Array(head.buffer), name, body);
+      const dir = new DataView(new ArrayBuffer(46));
+      [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, time, 2], [14, date, 2], [16, crc, 4], [20, body.length, 4], [24, body.length, 4], [28, name.length, 2], [42, offset, 4]]
+        .forEach(([at, v, size]) => (size === 4 ? dir.setUint32(at, v, true) : dir.setUint16(at, v, true)));
+      central.push(new Uint8Array(dir.buffer), name);
+      offset += 30 + name.length + body.length;
+    }
+    const dirSize = central.reduce((a, c) => a + c.length, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(8, files.length, true);
+    end.setUint16(10, files.length, true);
+    end.setUint32(12, dirSize, true);
+    end.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: XLSX_MIME });
+  }
+
+  const xmlEsc = (v) => String(v)
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+    .replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const colName = (i) => {
+    let n = i + 1;
+    let out = '';
+    while (n) {
+      const m = (n - 1) % 26;
+      out = String.fromCharCode(65 + m) + out;
+      n = Math.floor((n - 1) / 26);
+    }
+    return out;
+  };
+  /** Data „2026-10-05” jako liczba dni Excela (wtedy sortuje się i filtruje jak data). */
+  const excelDate = (iso) => {
+    const d = parseDate(iso);
+    return d ? Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 86400000) : null;
+  };
+  const XLSX_NUM = (n) => String(Math.round(n * 100) / 100);
+
+  // Style komórek: 0 zwykła, 1 nagłówek, 2 kwota, 3 data, 4 suma kwot, 5 pogrubiony tekst, 6 liczba, 7 suma liczb
+  const STYLE = { text: 0, head: 1, money: 2, date: 3, sumMoney: 4, bold: 5, int: 6, sumInt: 7 };
+  const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00 &quot;zł&quot;"/><numFmt numFmtId="165" formatCode="dd.mm.yyyy"/></numFmts>
+<fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE7EAEF"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top style="thin"><color auto="1"/></top><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="8">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="164" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>
+<xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="1" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+  /**
+   * Buduje skoroszyt .xlsx z jednym arkuszem.
+   * columns: [{ header, width, type: 'text' | 'money' | 'date' | 'int', value: (row) => wartość, sum?: true }]
+   */
+  function buildXlsx(sheetName, columns, rows, totalLabel) {
+    const last = rows.length + 1;
+    const lastCol = colName(columns.length - 1);
+    const cell = (ref, value, type, style) => {
+      if (value == null || value === '' || (typeof value === 'number' && !Number.isFinite(value))) return style ? `<c r="${ref}" s="${style}"/>` : '';
+      if (type === 'text') return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(value)}</t></is></c>`;
+      if (type === 'date') {
+        const n = excelDate(value);
+        return n == null ? '' : `<c r="${ref}" s="${style}"><v>${n}</v></c>`;
+      }
+      return `<c r="${ref}" s="${style}"><v>${XLSX_NUM(value)}</v></c>`;
+    };
+    const header = `<row r="1">${columns.map((c, i) => cell(`${colName(i)}1`, c.header, 'text', STYLE.head)).join('')}</row>`;
+    const body = rows.map((row, r) => `<row r="${r + 2}">${columns.map((c, i) => cell(`${colName(i)}${r + 2}`, c.value(row), c.type, STYLE[c.type])).join('')}</row>`).join('');
+    const totals = `<row r="${last + 1}">${columns.map((c, i) => {
+      const ref = `${colName(i)}${last + 1}`;
+      if (i === 1) return cell(ref, totalLabel, 'text', STYLE.bold);
+      if (!c.sum) return `<c r="${ref}" s="${STYLE.bold}"/>`;
+      const total = rows.reduce((a, row) => a + (Number(c.value(row)) || 0), 0);
+      return `<c r="${ref}" s="${c.type === 'int' ? STYLE.sumInt : STYLE.sumMoney}"><f>SUM(${colName(i)}2:${colName(i)}${last})</f><v>${XLSX_NUM(total)}</v></c>`;
+    }).join('')}</row>`;
+    const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<dimension ref="A1:${lastCol}${last + 1}"/>
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+<cols>${columns.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c.width}" customWidth="1"/>`).join('')}</cols>
+<sheetData>${header}${body}${totals}</sheetData>
+<autoFilter ref="A1:${lastCol}${last}"/>
+</worksheet>`;
+    const quoted = `'${sheetName.replace(/'/g, "''")}'`;
+    return zipFiles([
+      { name: '[Content_Types].xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+      { name: '_rels/.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+      { name: 'xl/workbook.xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView xWindow="0" yWindow="0" windowWidth="16384" windowHeight="8192"/></bookViews><sheets><sheet name="${xmlEsc(sheetName)}" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">${xmlEsc(quoted)}!$A$1:$${lastCol}$${last}</definedName></definedNames><calcPr calcId="0" fullCalcOnLoad="1"/></workbook>` },
+      { name: 'xl/_rels/workbook.xml.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+      { name: 'xl/worksheets/sheet1.xml', text: sheet },
+      { name: 'xl/styles.xml', text: XLSX_STYLES },
+    ]);
+  }
+
+  /** Okresy do wyboru w eksporcie: miesiące ze sprzedażą, ten rok, cały okres. */
+  function exportPeriods() {
+    const sold = data.items.filter((i) => i.status === 'sold');
+    const n = (p) => sold.filter((i) => inPeriod(i.soldAt, p)).length;
+    const year = String(new Date().getFullYear());
+    return soldMonths().map((m) => [`m:${m}`, `${monthLabel(m)} (${n(`m:${m}`)})`])
+      .concat([['year', `Ten rok — ${year} (${n('year')})`], ['all', `Cały okres (${sold.length})`]]);
+  }
+
+  function periodSlug(period) {
+    if (period.startsWith('m:')) return period.slice(2);
+    if (period === 'year') return String(new Date().getFullYear());
+    if (period === 'month') return today().slice(0, 7);
+    if (period === 'prev') {
+      const t = new Date();
+      return toISODate(new Date(t.getFullYear(), t.getMonth() - 1, 1)).slice(0, 7);
+    }
+    return 'caly-okres';
+  }
+
+  const SOLD_COLUMNS = [
+    { header: 'Data sprzedaży', width: 14, type: 'date', value: (i) => i.soldAt },
+    { header: 'Przedmiot', width: 38, type: 'text', value: (i) => displayName(i) },
+    { header: 'Kategoria', width: 16, type: 'text', value: (i) => catById(i.categoryId)?.name || '' },
+    { header: 'Ilość', width: 8, type: 'int', value: (i) => i.qty, sum: true },
+    { header: 'Cena za szt.', width: 14, type: 'money', value: (i) => i.salePrice },
+    { header: 'Przychód', width: 14, type: 'money', value: (i) => (i.salePrice != null ? i.salePrice * i.qty : null), sum: true },
+    { header: 'Cena zakupu za szt.', width: 18, type: 'money', value: (i) => i.purchasePrice },
+    { header: 'Koszt', width: 14, type: 'money', value: (i) => (i.purchasePrice != null ? i.purchasePrice * i.qty : null), sum: true },
+    { header: 'Zysk', width: 14, type: 'money', value: (i) => (i.salePrice != null && i.purchasePrice != null ? (i.salePrice - i.purchasePrice) * i.qty : null), sum: true },
+    { header: 'Kupujący', width: 18, type: 'text', value: (i) => i.buyer },
+    { header: 'Gdzie sprzedane', width: 16, type: 'text', value: (i) => i.platform },
+    { header: 'Przewoźnik', width: 14, type: 'text', value: (i) => i.carrier },
+    { header: 'Nr przesyłki', width: 26, type: 'text', value: (i) => i.tracking },
+    { header: 'Data zamówienia', width: 15, type: 'date', value: (i) => i.orderedAt },
+    { header: 'Data wysyłki', width: 14, type: 'date', value: (i) => i.shippedAt },
+    { header: 'Miejsce w magazynie', width: 18, type: 'text', value: (i) => i.location },
+    { header: 'Notatki', width: 30, type: 'text', value: (i) => i.notes },
+  ];
+
+  function soldForExport(period, category) {
+    return data.items
+      .filter((i) => i.status === 'sold' && inPeriod(i.soldAt, period))
+      .filter((i) => (category === 'all' ? true : category === 'none' ? !i.categoryId : i.categoryId === category))
+      .sort((a, b) => (a.soldAt || '').localeCompare(b.soldAt || '') || displayName(a).localeCompare(displayName(b), 'pl'));
+  }
+
+  /** Okno „Pobierz do Excela” w zakładce Sprzedane: wybór miesiąca (i kategorii) i plik .xlsx z sumami. */
+  function openSoldExport() {
+    const periods = exportPeriods();
+    if (!data.items.some((i) => i.status === 'sold')) {
+      toast('Nie masz jeszcze sprzedanych przedmiotów do pobrania.');
+      return;
+    }
+    const f = F('sprzedane');
+    const viewed = f.period === 'month' || f.period === 'prev' ? `m:${periodSlug(f.period)}` : f.period;
+    const def = periods.some(([id]) => id === viewed) ? viewed : periods[0][0];
+    const cats = [['all', 'Wszystkie kategorie']].concat(data.categories.map((c) => [c.id, c.name]), [['none', 'Bez kategorii']]);
+    const defCat = cats.some(([id]) => id === f.category) ? f.category : 'all';
+    openDialog({
+      title: 'Ewidencja sprzedaży do Excela',
+      submitText: 'Pobierz plik Excel',
+      body: `
+        <div class="form-grid">
+          ${field('period', 'Okres', `<select id="f-period" name="period">${periods.map(([id, label]) => `<option value="${esc(id)}" ${id === def ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`, { full: true })}
+          ${data.categories.length ? field('cat', 'Kategoria', `<select id="f-cat" name="cat">${cats.map(([id, label]) => `<option value="${esc(id)}" ${id === defCat ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`, { full: true }) : ''}
+        </div>
+        <p class="small" id="exportSummary" style="margin:14px 0 0"></p>
+        <p class="small muted" style="margin:6px 0 0">Plik .xlsx: data sprzedaży, przedmiot, ilość, cena, przychód, koszt, zysk, kupujący, wysyłka — z wierszem sum na końcu.</p>`,
+      onMount(form) {
+        const paint = () => {
+          const list = soldForExport(form.elements.period.value, form.elements.cat ? form.elements.cat.value : 'all');
+          const revenue = sum(list, (i) => (i.salePrice || 0) * i.qty);
+          const withCost = list.filter((i) => i.salePrice != null && i.purchasePrice != null);
+          const profit = sum(withCost, (i) => (i.salePrice - i.purchasePrice) * i.qty);
+          const units = sum(list, (i) => i.qty);
+          $('#exportSummary', form).innerHTML = list.length
+            ? `<b>${list.length} ${posWord(list.length)}</b> · ${units} ${unitsWord(units)} · przychód <b>${esc(fmtMoney(revenue))}</b>${withCost.length ? ` · zysk <b>${esc(fmtMoney(profit))}</b>` : ''}`
+            : 'W tym okresie nie ma sprzedaży.';
+          form.querySelector('.f-submit').disabled = !list.length;
+        };
+        form.addEventListener('change', paint);
+        paint();
+      },
+      onSubmit(form) {
+        const period = form.elements.period.value;
+        const cat = form.elements.cat ? form.elements.cat.value : 'all';
+        const list = soldForExport(period, cat);
+        if (!list.length) return false;
+        const slug = periodSlug(period);
+        const label = period.startsWith('m:') ? monthLabel(slug) : (period === 'year' ? slug : 'cały okres');
+        const blob = buildXlsx(`Sprzedane ${slug === 'caly-okres' ? 'całość' : slug}`, SOLD_COLUMNS, list, 'Razem');
+        const catSlug = cat === 'all' ? '' : `-${norm(cats.find(([id]) => id === cat)[1]).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+        download(`sprzedane-${slug}${catSlug}.xlsx`, blob, XLSX_MIME);
+        toast(`Pobrano ewidencję sprzedaży: ${label} (${list.length} ${posWord(list.length)})`);
+        return true;
+      },
+    });
+  }
+
   function applyTheme() {
     const root = document.documentElement;
     if (prefs.theme === 'light' || prefs.theme === 'dark') root.dataset.theme = prefs.theme;
@@ -2429,6 +2692,15 @@
     window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 
     $('#btnAdd').addEventListener('click', openAdd);
+    $('#btnExport').addEventListener('click', openSoldExport);
+    $('#toolbar').addEventListener('change', (e) => {
+      const sel = e.target.closest('[data-filter-select]');
+      if (!sel || !sel.value) return;
+      F()[sel.dataset.filterSelect] = sel.value;
+      renderToolbar();
+      renderListAndStats();
+      renderBulkbar();
+    });
     $('#fab').addEventListener('click', openAdd);
 
     const narrow = window.matchMedia('(max-width: 640px)');
